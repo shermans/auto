@@ -1,15 +1,32 @@
 # -*- coding: utf-8 -*-
 import base64
+import json
 import os
 import re
 import socket
 import urllib.parse
 from urllib.parse import urlparse
+from datetime import datetime, timezone, timedelta
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
- 
-USE_PROXY = False
- 
+
+# ==================== 用户自定义配置区 ====================
+# 全局代理配置开关：输入 'Y' 走代理，输入 'N' 不走代理
+PROXY_SWITCH = 'N'  
+
+# 抓取 Telegram 节点及聊天链接的时间限制（单位：天）。默认值为 7，仅抓取 7 天以内的内容，超过的不抓。
+DAYS_LIMIT = 7  
+# ========================================================
+
+# 根据开关自动配置 USE_PROXY 和 PROXIES
+USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
+PROXIES = {
+    "http": "http://127.0.0.1:12334",
+    "https": "http://127.0.0.1:12334"
+} if USE_PROXY else None
+
+# 自定义订阅转换解析接口
+CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
 
 def safe_base64_decode(s):
     s = s.strip()
@@ -31,10 +48,11 @@ def parse_links_file():
     links_path = 'links.txt'
     t_me_links = []
     github_links = []
+    chat_links = []
     
     if not os.path.exists(links_path):
         print(f"[错误] 未在同路径下找到 {links_path} 文件！")
-        return t_me_links, github_links
+        return t_me_links, github_links, chat_links
 
     current_group = None
     with open(links_path, 'r', encoding='utf-8') as f:
@@ -48,21 +66,83 @@ def parse_links_file():
             elif '[github]' in line.lower():
                 current_group = 'github'
                 continue
+            elif '[chat]' in line.lower():
+                current_group = 'chat'
+                continue
             
             if line.startswith('http://') or line.startswith('https://'):
                 if current_group == 't.me':
                     t_me_links.append(line)
                 elif current_group == 'github':
                     github_links.append(line)
+                elif current_group == 'chat':
+                    chat_links.append(line)
                     
-    return t_me_links, github_links
+    return t_me_links, github_links, chat_links
+
+def filter_tme_messages_by_days(html_content, days_limit):
+    """
+    针对 t.me/s/ 网页，切分出每条消息，并根据 datetime 标签判断是否在 days_limit 天以内。
+    返回过滤后保留的 HTML 文本内容。
+    """
+    if days_limit <= 0:
+        return html_content
+
+    now = datetime.now(timezone.utc)
+    cutoff_time = now - timedelta(days=days_limit)
+
+    message_blocks = re.split(r'(?=<div class="tgme_widget_message\s)', html_content)
+    filtered_html = ""
+    
+    kept_count = 0
+    dropped_count = 0
+
+    for block in message_blocks:
+        time_match = re.search(r'datetime="([^"]+)"', block)
+        if time_match:
+            time_str = time_match.group(1)
+            try:
+                msg_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                if msg_time >= cutoff_time:
+                    filtered_html += block + "\n"
+                    kept_count += 1
+                else:
+                    dropped_count += 1
+                    continue
+            except Exception:
+                filtered_html += block + "\n"
+        else:
+            filtered_html += block + "\n"
+
+    print(f"    -> [时间过滤] 保留 {kept_count} 条近期消息，过滤掉 {dropped_count} 条超过 {days_limit} 天的旧消息")
+    return filtered_html
+
+def is_download_link(url_str):
+    """
+    判断链接是否为带常见文件后缀的下载文件（如图片、安装包、压缩包、音视频等）
+    """
+    # 常见的文件后缀白名单（转小写比对）
+    ignored_extensions = (
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
+        '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi',
+        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
+        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.flv', '.wav',
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+        '.txt', '.json', '.xml', '.csv'
+    )
+    
+    parsed_path = urlparse(url_str).path.lower()
+    for ext in ignored_extensions:
+        if parsed_path.endswith(ext):
+            return True
+    return False
 
 def fetch_and_extract():
-    t_links, gh_links = parse_links_file()
-    all_links = t_links + gh_links
+    t_links, gh_links, chat_links = parse_links_file()
+    all_links = t_links + gh_links + chat_links
     
     if not all_links:
-        print("[错误] links.txt 中没有检测到任何有效链接！")
+        print("[错误] links.txt 中未检测到任何有效链接！")
         return []
 
     headers = {
@@ -70,25 +150,72 @@ def fetch_and_extract():
     }
     
     all_raw_text = ""
-    
-    for url in all_links:
+    processed_urls = set()
+    urls_to_fetch = []
+
+    for original_url in all_links:
+        if original_url.startswith(CONVERT_API):
+            urls_to_fetch.append(original_url)
+        elif original_url in chat_links or "clash" in original_url.lower() or "sub" in original_url.lower() or not original_url.endswith(('.txt', '.yaml', '.yml', '/')):
+            if not original_url.startswith("https://t.me/"):
+                encoded_target = urllib.parse.quote(original_url, safe='')
+                urls_to_fetch.append(CONVERT_API + encoded_target)
+            else:
+                urls_to_fetch.append(original_url)
+        else:
+            urls_to_fetch.append(original_url)
+
+    index = 0
+    while index < len(urls_to_fetch):
+        url = urls_to_fetch[index]
+        index += 1
+
+        if url in processed_urls:
+            continue
+        processed_urls.add(url)
+
         print(f"[-] 正在抓取: {url}")
         try:
             resp = requests.get(
                 url, 
                 headers=headers, 
                 timeout=15, 
-                proxies=PROXIES if USE_PROXY else None
+                proxies=PROXIES
             )
             if resp.status_code == 200:
                 page_text = resp.text
+                
+                # 如果是 t.me 链接，先通过天数限制过滤掉超期内容
+                if "t.me" in url:
+                    page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
+                    
+                    found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
+                    for sub_link in found_sub_links:
+                        if "t.me" in sub_link or "telegram.org" in sub_link or "w3.org" in sub_link:
+                            continue
+                        sub_link = sub_link.rstrip('.,;\'">)')
+                        
+                        # 过滤掉带文件后缀的下载链接（如 .apk, .jpg 等）
+                        if is_download_link(sub_link):
+                            continue
+                        
+                        if CONVERT_API in sub_link:
+                            converted_sub = sub_link
+                        else:
+                            converted_sub = CONVERT_API + urllib.parse.quote(sub_link, safe='')
+                            
+                        if converted_sub not in processed_urls and converted_sub not in urls_to_fetch:
+                            print(f"    -> [发现聊天订阅] 提取到订阅链接并加入队列: {sub_link}")
+                            urls_to_fetch.append(converted_sub)
+
                 found_in_page = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", page_text, re.IGNORECASE)
                 
                 decoded_page = safe_base64_decode(page_text)
                 found_in_decoded = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", decoded_page, re.IGNORECASE)
                 
                 total_found = len(set(found_in_page + found_in_decoded))
-                print(f"    -> 成功获取，提取到节点: {total_found} 个")
+                if total_found > 0:
+                    print(f"    -> 成功获取，提取到节点: {total_found} 个")
                 
                 all_raw_text += page_text + "\n" + decoded_page + "\n"
             else:
@@ -127,12 +254,25 @@ def is_us_node(node_str):
 
 def test_node_connectivity(node_str):
     try:
-        parsed = urlparse(node_str)
-        netloc = parsed.netloc
-        if '@' in netloc:
-            netloc = netloc.split('@')[-1]
-        host = netloc.split(':')[0].strip('[]')
-        port = int(netloc.split(':')[1]) if ':' in netloc else 443
+        host, port = None, None
+        
+        if node_str.lower().startswith('vmess://'):
+            base64_part = node_str.split('://')[1].split('#')[0]
+            decoded_json_str = safe_base64_decode(base64_part)
+            if decoded_json_str:
+                node_data = json.loads(decoded_json_str)
+                host = node_data.get('add')
+                port = int(node_data.get('port', 443))
+        else:
+            parsed = urlparse(node_str)
+            netloc = parsed.netloc
+            if '@' in netloc:
+                netloc = netloc.split('@')[-1]
+            host = netloc.split(':')[0].strip('[]')
+            port = int(netloc.split(':')[1]) if ':' in netloc else 443
+
+        if not host or not port:
+            return None
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.5)
@@ -144,11 +284,11 @@ def test_node_connectivity(node_str):
 
 def main():
     print("========================================")
-    print(" 开始通过 Hidify (12334) 抓取网页...")
+    proxy_status = f"开启 (12334)" if USE_PROXY else "关闭 (直连)"
+    print(f" 开始抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
     raw_nodes = fetch_and_extract()
     
-    # 测试之前先去重
     nodes = list(set(raw_nodes))
     print(f"\n[去重统计] 网页原始节点总数: {len(raw_nodes)} 个 | 去重后独立节点总数: {len(nodes)} 个")
     
@@ -186,6 +326,7 @@ def main():
     print(f" - 有效可用节点总数 (ALL.txt): {len(alive_nodes)} 个")
     print(f" - 其中美国节点   (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中其他节点   (OTHER.txt): {len(other_nodes)} 个")
+    print(f" - 频道时间天数限制:           {DAYS_LIMIT} 天")
     print("========================================")
 
 if __name__ == "__main__":
