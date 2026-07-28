@@ -12,6 +12,7 @@ https://baipiaoyun-oss.freeloadcloud.eu/api/v1/client/subscribe?token=567b7b6915
 https://sky.shuna.duab.kioalc.cn.fun.efgo.my/api/v1/client/subscribe?token=d5f75f58158ef9151b0fbaf417fd0d92
 https://gist.githubusercontent.com/shermans/698a8b7cd0a6eb5e27502d01a8f6515d/raw/proxysub
 https://www.xrayvip.com/free.txt
+https://peige.dpkj.qzz.io/dapei
 
 [chat]
 # 聊天记录里的 Clash 订阅链接或短链（脚本会自动调用接口转换）
