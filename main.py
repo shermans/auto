@@ -14,8 +14,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # 全局代理配置开关：输入 'Y' 走代理，输入 'N' 不走代理
 PROXY_SWITCH = 'N'  
 
+
+# 自定义订阅转换解析接口
+CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
+
+
 # 抓取 Telegram 节点及聊天链接的时间限制（单位：天）。默认值为 7，仅抓取 7 天以内的内容，超过的不抓。
 DAYS_LIMIT = 7  
+
 # ========================================================
 
 # 根据开关自动配置 USE_PROXY 和 PROXIES
@@ -24,9 +30,6 @@ PROXIES = {
     "http": "http://127.0.0.1:12334",
     "https": "http://127.0.0.1:12334"
 } if USE_PROXY else None
-
-# 自定义订阅转换解析接口
-CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
 
 def safe_base64_decode(s):
     s = s.strip()
@@ -121,7 +124,6 @@ def is_download_link(url_str):
     """
     判断链接是否为带常见文件后缀的下载文件（如图片、安装包、压缩包、音视频等）
     """
-    # 常见的文件后缀白名单（转小写比对）
     ignored_extensions = (
         '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
         '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi',
@@ -136,6 +138,50 @@ def is_download_link(url_str):
         if parsed_path.endswith(ext):
             return True
     return False
+
+def fetch_single_url(url, headers):
+    print(f"[-] 正在抓取: {url}")
+    try:
+        resp = requests.get(
+            url, 
+            headers=headers, 
+            timeout=15, 
+            proxies=PROXIES
+        )
+        if resp.status_code == 200:
+            page_text = resp.text
+            extracted_subs = []
+            
+            if "t.me" in url:
+                page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
+                found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
+                for sub_link in found_sub_links:
+                    if "t.me" in sub_link or "telegram.org" in sub_link or "w3.org" in sub_link:
+                        continue
+                    sub_link = sub_link.rstrip('.,;\'">)')
+                    if is_download_link(sub_link):
+                        continue
+                    if CONVERT_API in sub_link:
+                        converted_sub = sub_link
+                    else:
+                        converted_sub = CONVERT_API + urllib.parse.quote(sub_link, safe='')
+                    extracted_subs.append(converted_sub)
+
+            found_in_page = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", page_text, re.IGNORECASE)
+            decoded_page = safe_base64_decode(page_text)
+            found_in_decoded = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", decoded_page, re.IGNORECASE)
+            
+            total_found = len(set(found_in_page + found_in_decoded))
+            if total_found > 0:
+                print(f"    -> [{url}] 成功获取，提取到节点: {total_found} 个")
+            
+            combined_text = page_text + "\n" + decoded_page + "\n"
+            return combined_text, extracted_subs
+        else:
+            print(f"    -> [{url}] 抓取失败，HTTP 状态码: {resp.status_code}")
+    except Exception as e:
+        print(f"    -> [{url}] 请求异常: {e}")
+    return "", []
 
 def fetch_and_extract():
     t_links, gh_links, chat_links = parse_links_file()
@@ -165,63 +211,34 @@ def fetch_and_extract():
         else:
             urls_to_fetch.append(original_url)
 
-    index = 0
-    while index < len(urls_to_fetch):
-        url = urls_to_fetch[index]
-        index += 1
-
-        if url in processed_urls:
-            continue
-        processed_urls.add(url)
-
-        print(f"[-] 正在抓取: {url}")
-        try:
-            resp = requests.get(
-                url, 
-                headers=headers, 
-                timeout=15, 
-                proxies=PROXIES
-            )
-            if resp.status_code == 200:
-                page_text = resp.text
+    # 动态并发抓取队列
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        future_to_url = {}
+        queue = list(urls_to_fetch)
+        
+        while queue:
+            current_batch = []
+            for u in queue:
+                if u not in processed_urls:
+                    processed_urls.add(u)
+                    current_batch.append(u)
+            queue.clear()
+            
+            if not current_batch:
+                break
                 
-                # 如果是 t.me 链接，先通过天数限制过滤掉超期内容
-                if "t.me" in url:
-                    page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
-                    
-                    found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
-                    for sub_link in found_sub_links:
-                        if "t.me" in sub_link or "telegram.org" in sub_link or "w3.org" in sub_link:
-                            continue
-                        sub_link = sub_link.rstrip('.,;\'">)')
-                        
-                        # 过滤掉带文件后缀的下载链接（如 .apk, .jpg 等）
-                        if is_download_link(sub_link):
-                            continue
-                        
-                        if CONVERT_API in sub_link:
-                            converted_sub = sub_link
-                        else:
-                            converted_sub = CONVERT_API + urllib.parse.quote(sub_link, safe='')
-                            
-                        if converted_sub not in processed_urls and converted_sub not in urls_to_fetch:
-                            print(f"    -> [发现聊天订阅] 提取到订阅链接并加入队列: {sub_link}")
-                            urls_to_fetch.append(converted_sub)
-
-                found_in_page = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", page_text, re.IGNORECASE)
+            for url in current_batch:
+                future_to_url[executor.submit(fetch_single_url, url, headers)] = url
                 
-                decoded_page = safe_base64_decode(page_text)
-                found_in_decoded = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", decoded_page, re.IGNORECASE)
-                
-                total_found = len(set(found_in_page + found_in_decoded))
-                if total_found > 0:
-                    print(f"    -> 成功获取，提取到节点: {total_found} 个")
-                
-                all_raw_text += page_text + "\n" + decoded_page + "\n"
-            else:
-                print(f"    -> 抓取失败，HTTP 状态码: {resp.status_code}")
-        except Exception as e:
-            print(f"    -> 请求异常: {e}")
+            for future in as_completed(future_to_url):
+                page_text, new_subs = future.result()
+                if page_text:
+                    all_raw_text += page_text + "\n"
+                for sub in new_subs:
+                    if sub not in processed_urls and sub not in queue:
+                        print(f"    -> [发现聊天订阅] 提取到订阅链接并加入队列: {sub}")
+                        queue.append(sub)
+                future_to_url.pop(future, None)
 
     nodes = set()
     pattern = re.compile(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", re.IGNORECASE)
@@ -252,10 +269,9 @@ def is_us_node(node_str):
             return True
     return False
 
-def test_node_connectivity(node_str):
+def test_tcping(node_str):
     try:
         host, port = None, None
-        
         if node_str.lower().startswith('vmess://'):
             base64_part = node_str.split('://')[1].split('#')[0]
             decoded_json_str = safe_base64_decode(base64_part)
@@ -272,20 +288,32 @@ def test_node_connectivity(node_str):
             port = int(netloc.split(':')[1]) if ':' in netloc else 443
 
         if not host or not port:
-            return None
+            return False
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.5)
         result = s.connect_ex((host, port))
         s.close()
-        return node_str if result == 0 else None
+        return result == 0
     except Exception:
-        return None
+        return False
+
+def test_clash_connectivity(node_str):
+    try:
+        resp = requests.get("http://www.gstatic.com/generate_204", proxies={"http": node_str, "https": node_str}, timeout=3)
+        return resp.status_code == 204
+    except Exception:
+        return False
+
+def test_node_comprehensive(node_str):
+    tcp_ok = test_tcping(node_str)
+    clash_ok = test_clash_connectivity(node_str) if tcp_ok else False
+    return node_str, tcp_ok, clash_ok
 
 def main():
     print("========================================")
     proxy_status = f"开启 (12334)" if USE_PROXY else "关闭 (直连)"
-    print(f" 开始抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
+    print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
     raw_nodes = fetch_and_extract()
     
@@ -297,17 +325,35 @@ def main():
         return
 
     print("\n========================================")
-    print(" 正在使用 500 线程并发测试连通性...")
+    print(" 正在使用 500 线程并发测试连通性与协议可用性...")
     print("========================================")
     
+    tcp_failed_count = 0
+    clash_failed_count = 0
+    both_alive_count = 0
     alive_nodes = []
+
     with ThreadPoolExecutor(max_workers=500) as executor:
-        futures = {executor.submit(test_node_connectivity, node): node for node in nodes}
+        futures = {executor.submit(test_node_comprehensive, node): node for node in nodes}
         for future in as_completed(futures):
-            res = future.result()
-            if res:
-                alive_nodes.append(res)
-            
+            res_node, tcp_ok, clash_ok = future.result()
+            if not tcp_ok:
+                tcp_failed_count += 1
+            elif not clash_ok:
+                clash_failed_count += 1
+            else:
+                both_alive_count += 1
+                
+            if tcp_ok:
+                alive_nodes.append(res_node)
+
+    print("\n" + "="*40)
+    print(" 连通性测试报告：")
+    print(f" - TCPING 不通节点数: {tcp_failed_count} 个")
+    print(f" - TCP通但 CLASH 不通节点数: {clash_failed_count} 个")
+    print(f" - 均通（TCP与Clash双通）节点数: {both_alive_count} 个")
+    print("========================================")
+        
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
     other_nodes = [n for n in alive_nodes if not is_us_node(n)]
             
@@ -326,7 +372,7 @@ def main():
     print(f" - 有效可用节点总数 (ALL.txt): {len(alive_nodes)} 个")
     print(f" - 其中美国节点   (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中其他节点   (OTHER.txt): {len(other_nodes)} 个")
-    print(f" - 频道时间天数限制:           {DAYS_LIMIT} 天")
+    print(f" - 频道时间天数限制:            {DAYS_LIMIT} 天")
     print("========================================")
 
 if __name__ == "__main__":
