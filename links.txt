@@ -1,12 +1,15 @@
 [t.me]
 # Telegram 频道公开网页源,支持节点和订阅
 https://t.me/s/filtershekanpro
-https://t.me/s/freeVPNjd
+https://t.me/s/freevpnjd
 https://t.me/s/dingyue_center
 https://t.me/s/vpnfail_v2ray
+https://t.me/s/SSRSUB
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
+https://nodebuf.com/files/public/cms36djes2ivmvi5wzy5sachu/download
+https://gh-proxy.com/raw.githubusercontent.com/ssrsub/ssr/master/v2ray
 https://www.xrayvip.com/free.txt
 https://baipiaoyun-oss.freeloadcloud.eu/api/v1/client/subscribe?token=567b7b69152da9800cbb583d18499875
 https://sky.shuna.duab.kioalc.cn.fun.efgo.my/api/v1/client/subscribe?token=d5f75f58158ef9151b0fbaf417fd0d92
