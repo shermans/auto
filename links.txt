@@ -8,6 +8,9 @@ https://t.me/s/SSRSUB
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
+https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/refs/heads/main/subs.txt
+https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/all_extracted_configs.txt
+https://raw.githubusercontent.com/Romaxa55/MegaV_Public/refs/heads/main/subs/all.txt
 https://nodebuf.com/files/public/cms36djes2ivmvi5wzy5sachu/download
 https://gh-proxy.com/raw.githubusercontent.com/ssrsub/ssr/master/v2ray
 https://www.xrayvip.com/free.txt
