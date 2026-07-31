@@ -14,14 +14,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # 全局代理配置开关：输入 'Y' 走代理，输入 'N' 不走代理
 PROXY_SWITCH = 'N'  
 
-
 # 自定义订阅转换解析接口
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
 
-
 # 抓取 Telegram 节点及聊天链接的时间限制（单位：天）。默认值为 7，仅抓取 7 天以内的内容，超过的不抓。
 DAYS_LIMIT = 7  
-
 # ========================================================
 
 # 根据开关自动配置 USE_PROXY 和 PROXIES
@@ -84,10 +81,6 @@ def parse_links_file():
     return t_me_links, github_links, chat_links
 
 def filter_tme_messages_by_days(html_content, days_limit):
-    """
-    针对 t.me/s/ 网页，切分出每条消息，并根据 datetime 标签判断是否在 days_limit 天以内。
-    返回过滤后保留的 HTML 文本内容。
-    """
     if days_limit <= 0:
         return html_content
 
@@ -121,9 +114,6 @@ def filter_tme_messages_by_days(html_content, days_limit):
     return filtered_html
 
 def is_download_link(url_str):
-    """
-    判断链接是否为带常见文件后缀的下载文件（如图片、安装包、压缩包、音视频等）
-    """
     ignored_extensions = (
         '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
         '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi',
@@ -132,7 +122,6 @@ def is_download_link(url_str):
         '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
         '.txt', '.json', '.xml', '.csv'
     )
-    
     parsed_path = urlparse(url_str).path.lower()
     for ext in ignored_extensions:
         if parsed_path.endswith(ext):
@@ -211,7 +200,7 @@ def fetch_and_extract():
         else:
             urls_to_fetch.append(original_url)
 
-    # 动态并发抓取队列
+    # 动态并发抓取队列，避免死循环及无限膨胀
     with ThreadPoolExecutor(max_workers=50) as executor:
         future_to_url = {}
         queue = list(urls_to_fetch)
@@ -230,7 +219,8 @@ def fetch_and_extract():
             for url in current_batch:
                 future_to_url[executor.submit(fetch_single_url, url, headers)] = url
                 
-            for future in as_completed(future_to_url):
+            # 使用列表包裹避免运行时字典尺寸变动异常
+            for future in list(as_completed(future_to_url)):
                 page_text, new_subs = future.result()
                 if page_text:
                     all_raw_text += page_text + "\n"
@@ -240,17 +230,53 @@ def fetch_and_extract():
                         queue.append(sub)
                 future_to_url.pop(future, None)
 
-    nodes = set()
+    nodes = []
     pattern = re.compile(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", re.IGNORECASE)
     for node in pattern.findall(all_raw_text):
-        nodes.add(node.strip().rstrip('.,;'))
+        nodes.append(node.strip().rstrip('.,;'))
         
     for line in all_raw_text.splitlines():
         line_clean = line.strip()
         if "://" in line_clean and not line_clean.startswith("http"):
-            nodes.add(line_clean.rstrip('.,;'))
+            nodes.append(line_clean.rstrip('.,;'))
             
-    return list(nodes)
+    return nodes
+
+def extract_node_host(node_str):
+    """从节点链接中提取真实的服务器IP或域名主机地址"""
+    try:
+        if node_str.lower().startswith('vmess://'):
+            base64_part = node_str.split('://')[1].split('#')[0]
+            decoded_json_str = safe_base64_decode(base64_part)
+            if decoded_json_str:
+                node_data = json.loads(decoded_json_str)
+                host = node_data.get('add')
+                if host:
+                    return str(host).strip()
+        else:
+            parsed = urlparse(node_str)
+            netloc = parsed.netloc
+            if '@' in netloc:
+                netloc = netloc.split('@')[-1]
+            host = netloc.split(':')[0].strip('[]')
+            if host:
+                return host
+    except Exception:
+        pass
+    return "UnknownIP"
+
+def rename_node(node_str):
+    """在去重前重命名：格式为 '今天日期-节点IP'"""
+    today_str = datetime.now().strftime('%d') # 获取当前日期的天数，比如31
+    host = extract_node_host(node_str)
+    new_name = f"{today_str}-{host}"
+    
+    # 如果原节点自带 #备注，则替换掉；如果没有，则在末尾追加 #新名字
+    if '#' in node_str:
+        base_part = node_str.rsplit('#', 1)[0]
+        return f"{base_part}#{urllib.parse.quote(new_name)}"
+    else:
+        return f"{node_str}#{urllib.parse.quote(new_name)}"
 
 def is_us_node(node_str):
     us_keywords = ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
@@ -298,60 +324,57 @@ def test_tcping(node_str):
     except Exception:
         return False
 
-def test_clash_connectivity(node_str):
-    try:
-        resp = requests.get("http://www.gstatic.com/generate_204", proxies={"http": node_str, "https": node_str}, timeout=3)
-        return resp.status_code == 204
-    except Exception:
-        return False
-
 def test_node_comprehensive(node_str):
     tcp_ok = test_tcping(node_str)
-    clash_ok = test_clash_connectivity(node_str) if tcp_ok else False
-    return node_str, tcp_ok, clash_ok
+    # 取消了无法支持代理协议的 requests 崩溃测试，仅保留标准、稳妥的 tcping 连通性校验
+    return node_str, tcp_ok, tcp_ok
 
 def main():
     print("========================================")
     proxy_status = f"开启 (12334)" if USE_PROXY else "关闭 (直连)"
     print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
+    
+    # 1. 抓取原始节点（不去重）
     raw_nodes = fetch_and_extract()
+    print(f"\n[抓取统计] 网页原始节点总数: {len(raw_nodes)} 个")
     
-    nodes = list(set(raw_nodes))
-    print(f"\n[去重统计] 网页原始节点总数: {len(raw_nodes)} 个 | 去重后独立节点总数: {len(nodes)} 个")
-    
-    if len(nodes) == 0:
+    if len(raw_nodes) == 0:
         print("[提示] 没有找到任何节点。")
         return
 
+    # 2. 【核心修改】在去重之前，将所有节点全部重命名为 "今天日期-节点IP"
+    print("\n----------------------------------------")
+    print(" 正在对抓取到的所有节点进行统一重命名 (格式: 日期-IP)...")
+    print("----------------------------------------")
+    renamed_nodes = [rename_node(node) for node in raw_nodes]
+
+    # 3. 重命名之后再进行去重
+    nodes = list(set(renamed_nodes))
+    print(f"[去重统计] 重命名并去重后的独立节点总数: {len(nodes)} 个")
+
     print("\n========================================")
-    print(" 正在使用 500 线程并发测试连通性与协议可用性...")
+    print(" 正在使用多线程并发测试 TCP 连通性...")
     print("========================================")
     
     tcp_failed_count = 0
-    clash_failed_count = 0
     both_alive_count = 0
     alive_nodes = []
 
-    with ThreadPoolExecutor(max_workers=500) as executor:
+    with ThreadPoolExecutor(max_workers=200) as executor:
         futures = {executor.submit(test_node_comprehensive, node): node for node in nodes}
         for future in as_completed(futures):
-            res_node, tcp_ok, clash_ok = future.result()
+            res_node, tcp_ok, _ = future.result()
             if not tcp_ok:
                 tcp_failed_count += 1
-            elif not clash_ok:
-                clash_failed_count += 1
             else:
                 both_alive_count += 1
-                
-            if tcp_ok:
                 alive_nodes.append(res_node)
 
     print("\n" + "="*40)
     print(" 连通性测试报告：")
-    print(f" - TCPING 不通节点数: {tcp_failed_count} 个")
-    print(f" - TCP通但 CLASH 不通节点数: {clash_failed_count} 个")
-    print(f" - 均通（TCP与Clash双通）节点数: {both_alive_count} 个")
+    print(f" - TCP 不通节点数: {tcp_failed_count} 个")
+    print(f" - TCP 存活可用节点数: {both_alive_count} 个")
     print("========================================")
         
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
