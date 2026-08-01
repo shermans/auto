@@ -2,7 +2,7 @@ name: Auto Update Node Subscriptions
 
 on:
   schedule:
-    - cron: '0 0,12 * * *'
+    - cron: '0 8,12,16,20 * * *'
   workflow_dispatch:
 
 # 关键：赋予工作流对仓库内容的读写权限，解决 128 权限拒绝错误
