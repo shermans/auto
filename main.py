@@ -266,7 +266,6 @@ def extract_node_host(node_str):
 
 def get_country_code(node_str):
     """根据节点链接中的备注、名称及关键字智能判断并返回国家/地区简写（如 US, HK, JP 等）"""
-    # 关键字映射表（支持英文简写、全称及常见中文地名）
     country_mapping = {
         'US': ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯'],
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
@@ -282,7 +281,6 @@ def get_country_code(node_str):
         'AU': ['au', 'australia', '澳大利亚', '悉尼', '墨尔本']
     }
 
-    # 提取节点自带的备注（#后面的部分）
     name_part = ""
     if '#' in node_str:
         try:
@@ -294,20 +292,23 @@ def get_country_code(node_str):
 
     for code, keywords in country_mapping.items():
         for kw in keywords:
-            # 使用单词边界或直接包含匹配
             pattern = r'(?i)\b' + re.escape(kw) + r'\b' if len(kw) <= 3 else r'(?i)' + re.escape(kw)
             if re.search(pattern, search_target):
                 return code
                 
-    return "OTH" # 未能识别时归为其他
+    return "OTH"
 
 def rename_node(node_str):
-    """在去重前重命名：格式为 '国别简写-节点IP'，例如 'US-1.2.3.4'"""
+    """在去重前重命名：格式为 '国别-日期-IP'，例如 'US-02-1.2.3.4'（仅保留几号或月日）"""
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
-    new_name = f"{country}-{host}"
     
-    # 如果原节点自带 #备注，则替换掉；如果没有，则在末尾追加 #新名字
+    # 获取短日期，例如只取几号：datetime.now().strftime('%d') 
+    # 如果需要带月份（如 0802），可以改成 datetime.now().strftime('%m%d') 或 datetime.now().strftime('%d')
+    current_day = datetime.now().strftime('%d')  # 仅获取当前几号，例如 '02'
+    
+    new_name = f"{country}-{current_day}-{host}"
+    
     if '#' in node_str:
         base_part = node_str.rsplit('#', 1)[0]
         return f"{base_part}#{urllib.parse.quote(new_name)}"
@@ -364,9 +365,9 @@ def main():
         print("[提示] 没有找到任何节点。")
         return
 
-    # 2. 将所有节点全部重命名为 "国别简写-节点IP"
+    # 2. 将所有节点全部重命名为 "国别-日期-IP"
     print("\n----------------------------------------")
-    print(" 正在对抓取到的所有节点进行国别识别与统一重命名 (格式: 国别-IP)...")
+    print(" 正在对抓取到的所有节点进行国别识别与统一重命名 (格式: 国别-日期-IP)...")
     print("----------------------------------------")
     renamed_nodes = [rename_node(node) for node in raw_nodes]
 
