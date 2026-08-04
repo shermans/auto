@@ -81,8 +81,8 @@ def parse_links_file():
     return t_me_links, github_links, chat_links
 
 def parse_pslinks_file():
-    """专门用于解析 PSlinks.txt 里的链接"""
-    ps_path = 'PSlinks.txt'
+    """专门用于解析 self.txt 里的链接"""
+    ps_path = 'self.txt'
     ps_links = []
     if not os.path.exists(ps_path):
         print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过补充解析。")
@@ -95,7 +95,7 @@ def parse_pslinks_file():
                 continue
             if line.startswith('http://') or line.startswith('https://'):
                 ps_links.append(line)
-    print(f"[提示] 成功从 PSlinks.txt 读取到 {len(ps_links)} 个补充链接。")
+    print(f"[提示] 成功从 self.txt 读取到 {len(ps_links)} 个补充链接。")
     return ps_links
 
 def filter_tme_messages_by_days(html_content, days_limit):
@@ -412,16 +412,16 @@ def main():
     else:
         alive_nodes_1 = []
 
-    # 2. 抓取 PSlinks.txt 的补充链接节点（不进行二次去重和 TCP 测试）
+    # 2. 抓取 self.txt 的补充链接节点（不进行二次去重和 TCP 测试）
     ps_links = parse_pslinks_file()
     alive_nodes_2 = []
     if ps_links:
         raw_text_2 = fetch_links_batch(ps_links)
         raw_nodes_2 = extract_nodes_from_text(raw_text_2)
-        print(f"[抓取统计] PSlinks.txt 来源补充原始节点总数: {len(raw_nodes_2)} 个")
+        print(f"[抓取统计] self.txt 来源补充原始节点总数: {len(raw_nodes_2)} 个")
         if raw_nodes_2:
             print("\n----------------------------------------")
-            print(" 正在对 PSlinks.txt 补充节点进行国别识别与统一重命名（不进行去重和二次测速）...")
+            print(" 正在对 self.txt 补充节点进行国别识别与统一重命名（不进行去重和二次测速）...")
             print("----------------------------------------")
             alive_nodes_2 = [rename_node(node) for node in raw_nodes_2]
 
