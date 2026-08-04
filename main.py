@@ -80,6 +80,24 @@ def parse_links_file():
                     
     return t_me_links, github_links, chat_links
 
+def parse_pslinks_file():
+    """专门用于解析 PSlinks.txt 里的链接"""
+    ps_path = 'PSlinks.txt'
+    ps_links = []
+    if not os.path.exists(ps_path):
+        print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过补充解析。")
+        return ps_links
+
+    with open(ps_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('http://') or line.startswith('https://'):
+                ps_links.append(line)
+    print(f"[提示] 成功从 PSlinks.txt 读取到 {len(ps_links)} 个补充链接。")
+    return ps_links
+
 def filter_tme_messages_by_days(html_content, days_limit):
     if days_limit <= 0:
         return html_content
@@ -172,13 +190,10 @@ def fetch_single_url(url, headers):
         print(f"    -> [{url}] 请求异常: {e}")
     return "", []
 
-def fetch_and_extract():
-    t_links, gh_links, chat_links = parse_links_file()
-    all_links = t_links + gh_links + chat_links
-    
-    if not all_links:
-        print("[错误] links.txt 中未检测到任何有效链接！")
-        return []
+def fetch_links_batch(link_list):
+    """通用批量抓取并递归解析网页/订阅中的链接"""
+    if not link_list:
+        return ""
 
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -188,10 +203,10 @@ def fetch_and_extract():
     processed_urls = set()
     urls_to_fetch = []
 
-    for original_url in all_links:
+    for original_url in link_list:
         if original_url.startswith(CONVERT_API):
             urls_to_fetch.append(original_url)
-        elif original_url in chat_links or "clash" in original_url.lower() or "sub" in original_url.lower() or not original_url.endswith(('.txt', '.yaml', '.yml', '/')):
+        elif "clash" in original_url.lower() or "sub" in original_url.lower() or not original_url.endswith(('.txt', '.yaml', '.yml', '/')):
             if not original_url.startswith("https://t.me/"):
                 encoded_target = urllib.parse.quote(original_url, safe='')
                 urls_to_fetch.append(CONVERT_API + encoded_target)
@@ -200,7 +215,6 @@ def fetch_and_extract():
         else:
             urls_to_fetch.append(original_url)
 
-    # 动态并发抓取队列，避免死循环及无限膨胀
     with ThreadPoolExecutor(max_workers=50) as executor:
         future_to_url = {}
         queue = list(urls_to_fetch)
@@ -225,16 +239,20 @@ def fetch_and_extract():
                     all_raw_text += page_text + "\n"
                 for sub in new_subs:
                     if sub not in processed_urls and sub not in queue:
-                        print(f"    -> [发现聊天订阅] 提取到订阅链接并加入队列: {sub}")
+                        print(f"    -> [发现订阅] 提取到链接并加入队列: {sub}")
                         queue.append(sub)
                 future_to_url.pop(future, None)
 
+    return all_raw_text
+
+def extract_nodes_from_text(raw_text):
+    """从文本中提取并清洗出所有节点链接"""
     nodes = []
     pattern = re.compile(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", re.IGNORECASE)
-    for node in pattern.findall(all_raw_text):
+    for node in pattern.findall(raw_text):
         nodes.append(node.strip().rstrip('.,;'))
         
-    for line in all_raw_text.splitlines():
+    for line in raw_text.splitlines():
         line_clean = line.strip()
         if "://" in line_clean and not line_clean.startswith("http"):
             nodes.append(line_clean.rstrip('.,;'))
@@ -299,14 +317,10 @@ def get_country_code(node_str):
     return "OTH"
 
 def rename_node(node_str):
-    """在去重前重命名：格式为 '国别-日期-IP'，例如 'US-02-1.2.3.4'（仅保留几号或月日）"""
+    """在去重前重命名：格式为 '国别-日期-IP'，例如 'US-02-1.2.3.4'"""
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
-    
-    # 获取短日期，例如只取几号：datetime.now().strftime('%d') 
-    # 如果需要带月份（如 0802），可以改成 datetime.now().strftime('%m%d') 或 datetime.now().strftime('%d')
-    current_day = datetime.now().strftime('%d')  # 仅获取当前几号，例如 '02'
-    
+    current_day = datetime.now().strftime('%d')
     new_name = f"{country}-{current_day}-{host}"
     
     if '#' in node_str:
@@ -357,47 +371,62 @@ def main():
     print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
     
-    # 1. 抓取原始节点（不去重）
-    raw_nodes = fetch_and_extract()
-    print(f"\n[抓取统计] 网页原始节点总数: {len(raw_nodes)} 个")
+    # 1. 抓取 links.txt 的原始节点
+    t_links, gh_links, chat_links = parse_links_file()
+    all_links_1 = t_links + gh_links + chat_links
+    raw_text_1 = fetch_links_batch(all_links_1)
+    raw_nodes_1 = extract_nodes_from_text(raw_text_1)
+    print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_1)} 个")
     
-    if len(raw_nodes) == 0:
-        print("[提示] 没有找到任何节点。")
-        return
+    if len(raw_nodes_1) > 0:
+        print("\n----------------------------------------")
+        print(" 正在对 links.txt 节点进行国别识别与统一重命名...")
+        print("----------------------------------------")
+        renamed_nodes_1 = [rename_node(node) for node in raw_nodes_1]
+        nodes_1 = list(set(renamed_nodes_1))
+        print(f"[去重统计] links.txt 重命名并去重后的独立节点总数: {len(nodes_1)} 个")
 
-    # 2. 将所有节点全部重命名为 "国别-日期-IP"
-    print("\n----------------------------------------")
-    print(" 正在对抓取到的所有节点进行国别识别与统一重命名 (格式: 国别-日期-IP)...")
-    print("----------------------------------------")
-    renamed_nodes = [rename_node(node) for node in raw_nodes]
+        print("\n========================================")
+        print(" 正在使用多线程并发测试 links.txt 节点的 TCP 连通性...")
+        print("========================================")
+        
+        tcp_failed_count = 0
+        both_alive_count = 0
+        alive_nodes_1 = []
 
-    # 3. 重命名之后再进行去重
-    nodes = list(set(renamed_nodes))
-    print(f"[去重统计] 重命名并去重后的独立节点总数: {len(nodes)} 个")
+        with ThreadPoolExecutor(max_workers=200) as executor:
+            futures = {executor.submit(test_node_comprehensive, node): node for node in nodes_1}
+            for future in as_completed(futures):
+                res_node, tcp_ok, _ = future.result()
+                if not tcp_ok:
+                    tcp_failed_count += 1
+                else:
+                    both_alive_count += 1
+                    alive_nodes_1.append(res_node)
 
-    print("\n========================================")
-    print(" 正在使用多线程并发测试 TCP 连通性...")
-    print("========================================")
-    
-    tcp_failed_count = 0
-    both_alive_count = 0
-    alive_nodes = []
+        print("\n" + "="*40)
+        print(" links.txt 连通性测试报告：")
+        print(f" - TCP 不通节点数: {tcp_failed_count} 个")
+        print(f" - TCP 存活可用节点数: {both_alive_count} 个")
+        print("========================================")
+    else:
+        alive_nodes_1 = []
 
-    with ThreadPoolExecutor(max_workers=200) as executor:
-        futures = {executor.submit(test_node_comprehensive, node): node for node in nodes}
-        for future in as_completed(futures):
-            res_node, tcp_ok, _ = future.result()
-            if not tcp_ok:
-                tcp_failed_count += 1
-            else:
-                both_alive_count += 1
-                alive_nodes.append(res_node)
+    # 2. 抓取 PSlinks.txt 的补充链接节点（不进行二次去重和 TCP 测试）
+    ps_links = parse_pslinks_file()
+    alive_nodes_2 = []
+    if ps_links:
+        raw_text_2 = fetch_links_batch(ps_links)
+        raw_nodes_2 = extract_nodes_from_text(raw_text_2)
+        print(f"[抓取统计] PSlinks.txt 来源补充原始节点总数: {len(raw_nodes_2)} 个")
+        if raw_nodes_2:
+            print("\n----------------------------------------")
+            print(" 正在对 PSlinks.txt 补充节点进行国别识别与统一重命名（不进行去重和二次测速）...")
+            print("----------------------------------------")
+            alive_nodes_2 = [rename_node(node) for node in raw_nodes_2]
 
-    print("\n" + "="*40)
-    print(" 连通性测试报告：")
-    print(f" - TCP 不通节点数: {tcp_failed_count} 个")
-    print(f" - TCP 存活可用节点数: {both_alive_count} 个")
-    print("========================================")
+    # 3. 将两部分存活/补充节点直接合并
+    alive_nodes = alive_nodes_1 + alive_nodes_2
         
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
     other_nodes = [n for n in alive_nodes if not is_us_node(n)]
@@ -413,11 +442,11 @@ def main():
     make_base64_file('OTHER.txt', other_nodes)
     
     print("\n" + "="*40)
-    print(" 测速完成！结果统计：")
-    print(f" - 有效可用节点总数 (ALL.txt): {len(alive_nodes)} 个")
-    print(f" - 其中美国节点    (US.txt):    {len(us_nodes)} 个")
-    print(f" - 其中其他节点    (OTHER.txt): {len(other_nodes)} 个")
-    print(f" - 频道时间天数限制:            {DAYS_LIMIT} 天")
+    print(" 全部处理完成！最终结果统计：")
+    print(f" - 最终有效可用节点总数 (ALL.txt): {len(alive_nodes)} 个")
+    print(f" - 其中美国节点        (US.txt):    {len(us_nodes)} 个")
+    print(f" - 其中其他节点        (OTHER.txt): {len(other_nodes)} 个")
+    print(f" - 频道时间天数限制:                {DAYS_LIMIT} 天")
     print("========================================")
 
 if __name__ == "__main__":
