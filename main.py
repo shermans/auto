@@ -28,7 +28,7 @@ PROXIES = {
     "https": "http://127.0.0.1:12334"
 } if USE_PROXY else None
 
-# 全面扩充的代理协议匹配正则（已加入 anytls、juicity、wireguard、ssh 等）
+# 支持的所有主流及新兴代理协议（含 anytls）
 SUPPORTED_SCHEMES = (
     "vmess", "vless", "trojan", "ss", "ssr", 
     "hysteria", "hy2", "tuic", "anytls", 
@@ -268,7 +268,7 @@ def extract_nodes_from_text(raw_text):
     return nodes
 
 def extract_node_host(node_str):
-    """从节点链接中提取真实的服务器IP或域名主机地址"""
+    """从节点链接中提取真实的服务器IP或域名主机地址（完美适配 anytls 等带参数及hash的链接）"""
     try:
         if node_str.lower().startswith('vmess://'):
             base64_part = node_str.split('://')[1].split('#')[0]
@@ -279,7 +279,11 @@ def extract_node_host(node_str):
                 if host:
                     return str(host).strip()
         else:
-            parsed = urlparse(node_str)
+            # 去除 # 后面的备注信息
+            clean_str = node_str.split('#')[0]
+            # 去除 ? 后面的查询参数，防止干扰域名解析
+            clean_str = clean_str.split('?')[0]
+            parsed = urlparse(clean_str)
             netloc = parsed.netloc
             if '@' in netloc:
                 netloc = netloc.split('@')[-1]
@@ -338,7 +342,7 @@ def rename_node(node_str):
         return f"{node_str}#{urllib.parse.quote(new_name)}"
 
 def is_ai_friendly_node(node_str):
-    """定义 AI 友好的国家范围（Gemini / GPT 支持较好的主流地区，如美、日、新、韩、台、英、欧、加、澳等）"""
+    """定义 AI 友好的国家范围（Gemini / GPT 支持较好的主流地区）"""
     ai_friendly_countries = {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
     return get_country_code(node_str) in ai_friendly_countries
 
@@ -353,7 +357,8 @@ def test_tcping(node_str):
                 host = node_data.get('add')
                 port = int(node_data.get('port', 443))
         else:
-            parsed = urlparse(node_str)
+            clean_str = node_str.split('#')[0].split('?')[0]
+            parsed = urlparse(clean_str)
             netloc = parsed.netloc
             if '@' in netloc:
                 netloc = netloc.split('@')[-1]
