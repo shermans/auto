@@ -28,6 +28,14 @@ PROXIES = {
     "https": "http://127.0.0.1:12334"
 } if USE_PROXY else None
 
+# 全面扩充的代理协议匹配正则（已加入 anytls、juicity、wireguard、ssh 等）
+SUPPORTED_SCHEMES = (
+    "vmess", "vless", "trojan", "ss", "ssr", 
+    "hysteria", "hy2", "tuic", "anytls", 
+    "juicity", "wireguard", "wg", "ssh", "socks5", "http"
+)
+PROTOCOL_REGEX_STR = r"((?:" + "|".join(SUPPORTED_SCHEMES) + r")://[^\s<>\"']+)"
+
 def safe_base64_decode(s):
     s = s.strip()
     padding = len(s) % 4
@@ -174,9 +182,9 @@ def fetch_single_url(url, headers):
                         converted_sub = CONVERT_API + urllib.parse.quote(sub_link, safe='')
                     extracted_subs.append(converted_sub)
 
-            found_in_page = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", page_text, re.IGNORECASE)
+            found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
             decoded_page = safe_base64_decode(page_text)
-            found_in_decoded = re.findall(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", decoded_page, re.IGNORECASE)
+            found_in_decoded = re.findall(PROTOCOL_REGEX_STR, decoded_page, re.IGNORECASE)
             
             total_found = len(set(found_in_page + found_in_decoded))
             if total_found > 0:
@@ -248,7 +256,7 @@ def fetch_links_batch(link_list):
 def extract_nodes_from_text(raw_text):
     """从文本中提取并清洗出所有节点链接"""
     nodes = []
-    pattern = re.compile(r"((?:vmess|vless|trojan|ss|ssr|hysteria|hy2|tuic)://[^\s<>\"']+)", re.IGNORECASE)
+    pattern = re.compile(PROTOCOL_REGEX_STR, re.IGNORECASE)
     for node in pattern.findall(raw_text):
         nodes.append(node.strip().rstrip('.,;'))
         
@@ -283,7 +291,7 @@ def extract_node_host(node_str):
     return "UnknownIP"
 
 def get_country_code(node_str):
-    """根据节点链接中的备注、名称及关键字智能判断并返回国家/地区简写（如 US, HK, JP 等）"""
+    """根据节点链接中的备注、名称及关键字智能判断并返回国家/地区简写"""
     country_mapping = {
         'US': ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯'],
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
@@ -317,7 +325,7 @@ def get_country_code(node_str):
     return "OTH"
 
 def rename_node(node_str):
-    """在去重前重命名：格式为 '国别-日期-IP'，例如 'US-02-1.2.3.4'"""
+    """在去重前重命名：格式为 '国别-日期-IP'"""
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
     current_day = datetime.now().strftime('%d')
@@ -329,8 +337,10 @@ def rename_node(node_str):
     else:
         return f"{node_str}#{urllib.parse.quote(new_name)}"
 
-def is_us_node(node_str):
-    return get_country_code(node_str) == 'US'
+def is_ai_friendly_node(node_str):
+    """定义 AI 友好的国家范围（Gemini / GPT 支持较好的主流地区，如美、日、新、韩、台、英、欧、加、澳等）"""
+    ai_friendly_countries = {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
+    return get_country_code(node_str) in ai_friendly_countries
 
 def test_tcping(node_str):
     try:
@@ -412,7 +422,7 @@ def main():
     else:
         alive_nodes_1 = []
 
-    # 2. 抓取 self.txt 的补充链接节点（不进行二次去重和 TCP 测试）
+    # 2. 抓取 self.txt 的补充链接节点
     ps_links = parse_pslinks_file()
     alive_nodes_2 = []
     if ps_links:
@@ -421,15 +431,15 @@ def main():
         print(f"[抓取统计] self.txt 来源补充原始节点总数: {len(raw_nodes_2)} 个")
         if raw_nodes_2:
             print("\n----------------------------------------")
-            print(" 正在对 self.txt 补充节点进行国别识别与统一重命名（不进行去重和二次测速）...")
+            print(" 正在对 self.txt 补充节点进行国别识别与统一重命名...")
             print("----------------------------------------")
             alive_nodes_2 = [rename_node(node) for node in raw_nodes_2]
 
     # 3. 将两部分存活/补充节点直接合并
     alive_nodes = alive_nodes_1 + alive_nodes_2
         
-    us_nodes = [n for n in alive_nodes if is_us_node(n)]
-    other_nodes = [n for n in alive_nodes if not is_us_node(n)]
+    ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
+    other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
             
     def make_base64_file(filename, node_list):
         content = "\n".join(node_list)
@@ -438,15 +448,15 @@ def main():
             f.write(b64_content)
 
     make_base64_file('ALL.txt', alive_nodes)
-    make_base64_file('US.txt', us_nodes)
+    make_base64_file('AI.txt', ai_nodes)
     make_base64_file('OTHER.txt', other_nodes)
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
-    print(f" - 最终有效可用节点总数 (ALL.txt): {len(alive_nodes)} 个")
-    print(f" - 其中美国节点        (US.txt):    {len(us_nodes)} 个")
-    print(f" - 其中其他节点        (OTHER.txt): {len(other_nodes)} 个")
-    print(f" - 频道时间天数限制:                {DAYS_LIMIT} 天")
+    print(f" - 最终有效可用节点总数 (ALL.txt):   {len(alive_nodes)} 个")
+    print(f" - 其中 AI 友好节点       (AI.txt):    {len(ai_nodes)} 个")
+    print(f" - 其中其他节点           (OTHER.txt): {len(other_nodes)} 个")
+    print(f" - 频道时间天数限制:                  {DAYS_LIMIT} 天")
     print("========================================")
 
 if __name__ == "__main__":
