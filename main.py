@@ -11,24 +11,17 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
-# 全局代理配置开关：输入 'Y' 走代理，输入 'N' 不走代理
 PROXY_SWITCH = 'N'  
-
-# 自定义订阅转换解析接口
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
-
-# 抓取 Telegram 节点及聊天链接的时间限制（单位：天）。默认值为 7，仅抓取 7 天以内的内容，超过的不抓。
 DAYS_LIMIT = 7  
 # ========================================================
 
-# 根据开关自动配置 USE_PROXY 和 PROXIES
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
 PROXIES = {
-    "http": "http://127.0.0.1:12334",
-    "https": "http://127.0.0.1:12334"
+    "http": "http://127.0.0.1:10808",
+    "https": "http://127.0.0.1:10808"
 } if USE_PROXY else None
 
-# 支持的所有主流及新兴代理协议（含 anytls）
 SUPPORTED_SCHEMES = (
     "vmess", "vless", "trojan", "ss", "ssr", 
     "hysteria", "hy2", "tuic", "anytls", 
@@ -54,12 +47,8 @@ def safe_base64_decode(s):
 
 def parse_links_file():
     links_path = 'links.txt'
-    t_me_links = []
-    github_links = []
-    chat_links = []
-    
+    t_me_links, github_links, chat_links = [], [], []
     if not os.path.exists(links_path):
-        print(f"[错误] 未在同路径下找到 {links_path} 文件！")
         return t_me_links, github_links, chat_links
 
     current_group = None
@@ -79,22 +68,18 @@ def parse_links_file():
                 continue
             
             if line.startswith('http://') or line.startswith('https://'):
-                if current_group == 't.me':
-                    t_me_links.append(line)
-                elif current_group == 'github':
-                    github_links.append(line)
-                elif current_group == 'chat':
-                    chat_links.append(line)
-                    
+                if current_group == 't.me': t_me_links.append(line)
+                elif current_group == 'github': github_links.append(line)
+                elif current_group == 'chat': chat_links.append(line)
     return t_me_links, github_links, chat_links
 
 def parse_pslinks_file():
-    """专门用于解析 self.txt 里的链接"""
+    """解析 self.txt：为每个链接同时生成‘直接访问抓取’和‘转换接口抓取’两个独立任务"""
     ps_path = 'self.txt'
-    ps_links = []
+    ps_tasks = []
     if not os.path.exists(ps_path):
         print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过补充解析。")
-        return ps_links
+        return ps_tasks
 
     with open(ps_path, 'r', encoding='utf-8') as f:
         for line in f:
@@ -102,41 +87,33 @@ def parse_pslinks_file():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
-                ps_links.append(line)
-    print(f"[提示] 成功从 self.txt 读取到 {len(ps_links)} 个补充链接。")
-    return ps_links
+                # 任务 1：直接访问抓取（适合本身就是 Base64 订阅或直连网页的链接）
+                ps_tasks.append(line)
+                # 任务 2：拼上转换接口再抓取（适合需要转换服务吐出 mixed 格式的订阅）
+                converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
+                ps_tasks.append(converted_url)
+                
+    print(f"[提示] 成功从 self.txt 读取链接，已开启双通道（直接抓 + 转换抓），共生成 {len(ps_tasks)} 个请求任务。")
+    return ps_tasks
 
 def filter_tme_messages_by_days(html_content, days_limit):
     if days_limit <= 0:
         return html_content
-
     now = datetime.now(timezone.utc)
     cutoff_time = now - timedelta(days=days_limit)
-
     message_blocks = re.split(r'(?=<div class="tgme_widget_message\s)', html_content)
     filtered_html = ""
-    
-    kept_count = 0
-    dropped_count = 0
-
     for block in message_blocks:
         time_match = re.search(r'datetime="([^"]+)"', block)
         if time_match:
-            time_str = time_match.group(1)
             try:
-                msg_time = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                msg_time = datetime.fromisoformat(time_match.group(1).replace('Z', '+00:00'))
                 if msg_time >= cutoff_time:
                     filtered_html += block + "\n"
-                    kept_count += 1
-                else:
-                    dropped_count += 1
-                    continue
             except Exception:
                 filtered_html += block + "\n"
         else:
             filtered_html += block + "\n"
-
-    print(f"    -> [时间过滤] 保留 {kept_count} 条近期消息，过滤掉 {dropped_count} 条超过 {days_limit} 天的旧消息")
     return filtered_html
 
 def is_download_link(url_str):
@@ -149,20 +126,12 @@ def is_download_link(url_str):
         '.txt', '.json', '.xml', '.csv'
     )
     parsed_path = urlparse(url_str).path.lower()
-    for ext in ignored_extensions:
-        if parsed_path.endswith(ext):
-            return True
-    return False
+    return any(parsed_path.endswith(ext) for ext in ignored_extensions)
 
 def fetch_single_url(url, headers):
     print(f"[-] 正在抓取: {url}")
     try:
-        resp = requests.get(
-            url, 
-            headers=headers, 
-            timeout=15, 
-            proxies=PROXIES
-        )
+        resp = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         if resp.status_code == 200:
             page_text = resp.text
             extracted_subs = []
@@ -171,15 +140,10 @@ def fetch_single_url(url, headers):
                 page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
                 found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
                 for sub_link in found_sub_links:
-                    if "t.me" in sub_link or "telegram.org" in sub_link or "w3.org" in sub_link:
+                    if any(x in sub_link for x in ["t.me", "telegram.org", "w3.org"]) or is_download_link(sub_link):
                         continue
                     sub_link = sub_link.rstrip('.,;\'">)')
-                    if is_download_link(sub_link):
-                        continue
-                    if CONVERT_API in sub_link:
-                        converted_sub = sub_link
-                    else:
-                        converted_sub = CONVERT_API + urllib.parse.quote(sub_link, safe='')
+                    converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
                     extracted_subs.append(converted_sub)
 
             found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
@@ -199,7 +163,6 @@ def fetch_single_url(url, headers):
     return "", []
 
 def fetch_links_batch(link_list):
-    """通用批量抓取并递归解析网页/订阅中的链接"""
     if not link_list:
         return ""
 
@@ -209,30 +172,15 @@ def fetch_links_batch(link_list):
     
     all_raw_text = ""
     processed_urls = set()
-    urls_to_fetch = []
-
-    for original_url in link_list:
-        if original_url.startswith(CONVERT_API):
-            urls_to_fetch.append(original_url)
-        elif "clash" in original_url.lower() or "sub" in original_url.lower() or not original_url.endswith(('.txt', '.yaml', '.yml', '/')):
-            if not original_url.startswith("https://t.me/"):
-                encoded_target = urllib.parse.quote(original_url, safe='')
-                urls_to_fetch.append(CONVERT_API + encoded_target)
-            else:
-                urls_to_fetch.append(original_url)
-        else:
-            urls_to_fetch.append(original_url)
+    queue = list(link_list)
 
     with ThreadPoolExecutor(max_workers=50) as executor:
         future_to_url = {}
-        queue = list(urls_to_fetch)
         
         while queue:
-            current_batch = []
-            for u in queue:
-                if u not in processed_urls:
-                    processed_urls.add(u)
-                    current_batch.append(u)
+            current_batch = [u for u in queue if u not in processed_urls]
+            for u in current_batch:
+                processed_urls.add(u)
             queue.clear()
             
             if not current_batch:
@@ -247,55 +195,40 @@ def fetch_links_batch(link_list):
                     all_raw_text += page_text + "\n"
                 for sub in new_subs:
                     if sub not in processed_urls and sub not in queue:
-                        print(f"    -> [发现订阅] 提取到链接并加入队列: {sub}")
                         queue.append(sub)
                 future_to_url.pop(future, None)
 
     return all_raw_text
 
 def extract_nodes_from_text(raw_text):
-    """从文本中提取并清洗出所有节点链接"""
     nodes = []
     pattern = re.compile(PROTOCOL_REGEX_STR, re.IGNORECASE)
     for node in pattern.findall(raw_text):
         nodes.append(node.strip().rstrip('.,;'))
-        
     for line in raw_text.splitlines():
         line_clean = line.strip()
         if "://" in line_clean and not line_clean.startswith("http"):
             nodes.append(line_clean.rstrip('.,;'))
-            
     return nodes
 
 def extract_node_host(node_str):
-    """从节点链接中提取真实的服务器IP或域名主机地址（完美适配 anytls 等带参数及hash的链接）"""
     try:
         if node_str.lower().startswith('vmess://'):
-            base64_part = node_str.split('://')[1].split('#')[0]
-            decoded_json_str = safe_base64_decode(base64_part)
+            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
             if decoded_json_str:
-                node_data = json.loads(decoded_json_str)
-                host = node_data.get('add')
-                if host:
-                    return str(host).strip()
-        else:
-            # 去除 # 后面的备注信息
-            clean_str = node_str.split('#')[0]
-            # 去除 ? 后面的查询参数，防止干扰域名解析
-            clean_str = clean_str.split('?')[0]
-            parsed = urlparse(clean_str)
-            netloc = parsed.netloc
-            if '@' in netloc:
-                netloc = netloc.split('@')[-1]
-            host = netloc.split(':')[0].strip('[]')
-            if host:
-                return host
+                host = json.loads(decoded_json_str).get('add')
+                if host: return str(host).strip()
+        clean_str = node_str.split('#')[0].split('?')[0]
+        parsed = urlparse(clean_str)
+        netloc = parsed.netloc or clean_str.split('://')[-1]
+        if '@' in netloc: netloc = netloc.split('@')[-1]
+        host = netloc.split(':')[0].strip('[]')
+        if host: return host
     except Exception:
         pass
     return "UnknownIP"
 
 def get_country_code(node_str):
-    """根据节点链接中的备注、名称及关键字智能判断并返回国家/地区简写"""
     country_mapping = {
         'US': ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯'],
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
@@ -310,64 +243,47 @@ def get_country_code(node_str):
         'CA': ['ca', 'canada', '加拿大', '温哥华', '多伦多'],
         'AU': ['au', 'australia', '澳大利亚', '悉尼', '墨尔本']
     }
-
-    name_part = ""
-    if '#' in node_str:
-        try:
-            name_part = urllib.parse.unquote(node_str.split('#')[-1])
-        except Exception:
-            name_part = node_str.split('#')[-1]
-            
+    name_part = urllib.parse.unquote(node_str.split('#')[-1]) if '#' in node_str else ""
     search_target = (name_part + " " + node_str).lower()
-
     for code, keywords in country_mapping.items():
         for kw in keywords:
             pattern = r'(?i)\b' + re.escape(kw) + r'\b' if len(kw) <= 3 else r'(?i)' + re.escape(kw)
             if re.search(pattern, search_target):
                 return code
-                
     return "OTH"
 
 def rename_node(node_str):
-    """在去重前重命名：格式为 '国别-日期-IP'"""
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
     current_day = datetime.now().strftime('%d')
     new_name = f"{country}-{current_day}-{host}"
-    
     if '#' in node_str:
-        base_part = node_str.rsplit('#', 1)[0]
-        return f"{base_part}#{urllib.parse.quote(new_name)}"
+        return f"{node_str.rsplit('#', 1)[0]}#{urllib.parse.quote(new_name)}"
     else:
         return f"{node_str}#{urllib.parse.quote(new_name)}"
 
 def is_ai_friendly_node(node_str):
-    """定义 AI 友好的国家范围（Gemini / GPT 支持较好的主流地区）"""
-    ai_friendly_countries = {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
-    return get_country_code(node_str) in ai_friendly_countries
+    return get_country_code(node_str) in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
 
 def test_tcping(node_str):
     try:
         host, port = None, None
         if node_str.lower().startswith('vmess://'):
-            base64_part = node_str.split('://')[1].split('#')[0]
-            decoded_json_str = safe_base64_decode(base64_part)
+            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
             if decoded_json_str:
                 node_data = json.loads(decoded_json_str)
-                host = node_data.get('add')
-                port = int(node_data.get('port', 443))
-        else:
+                host, port = node_data.get('add'), int(node_data.get('port', 443))
+        if not host or not port:
             clean_str = node_str.split('#')[0].split('?')[0]
             parsed = urlparse(clean_str)
-            netloc = parsed.netloc
-            if '@' in netloc:
-                netloc = netloc.split('@')[-1]
-            host = netloc.split(':')[0].strip('[]')
-            port = int(netloc.split(':')[1]) if ':' in netloc else 443
-
-        if not host or not port:
-            return False
-
+            netloc = parsed.netloc or clean_str.split('://')[-1]
+            if '@' in netloc: netloc = netloc.split('@')[-1]
+            if ':' in netloc:
+                parts = netloc.rsplit(':', 1)
+                host, port = parts[0].strip('[]'), int(parts[1])
+            else:
+                host, port = netloc.strip('[]'), 443
+        if not host or not port: return False
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(1.5)
         result = s.connect_ex((host, port))
@@ -382,75 +298,42 @@ def test_node_comprehensive(node_str):
 
 def main():
     print("========================================")
-    proxy_status = f"开启 (12334)" if USE_PROXY else "关闭 (直连)"
+    proxy_status = f"开启 (10808)" if USE_PROXY else "关闭 (直连)"
     print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
     
-    # 1. 抓取 links.txt 的原始节点
+    # 1. links.txt 处理（需要测活）
     t_links, gh_links, chat_links = parse_links_file()
-    all_links_1 = t_links + gh_links + chat_links
-    raw_text_1 = fetch_links_batch(all_links_1)
-    raw_nodes_1 = extract_nodes_from_text(raw_text_1)
+    raw_nodes_1 = extract_nodes_from_text(fetch_links_batch(t_links + gh_links + chat_links))
     print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_1)} 个")
     
-    if len(raw_nodes_1) > 0:
-        print("\n----------------------------------------")
-        print(" 正在对 links.txt 节点进行国别识别与统一重命名...")
-        print("----------------------------------------")
-        renamed_nodes_1 = [rename_node(node) for node in raw_nodes_1]
-        nodes_1 = list(set(renamed_nodes_1))
-        print(f"[去重统计] links.txt 重命名并去重后的独立节点总数: {len(nodes_1)} 个")
-
-        print("\n========================================")
-        print(" 正在使用多线程并发测试 links.txt 节点的 TCP 连通性...")
-        print("========================================")
-        
-        tcp_failed_count = 0
-        both_alive_count = 0
-        alive_nodes_1 = []
-
+    alive_nodes_1 = []
+    if raw_nodes_1:
+        nodes_1 = list(set([rename_node(n) for n in raw_nodes_1]))
         with ThreadPoolExecutor(max_workers=200) as executor:
-            futures = {executor.submit(test_node_comprehensive, node): node for node in nodes_1}
-            for future in as_completed(futures):
+            for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in nodes_1}):
                 res_node, tcp_ok, _ = future.result()
-                if not tcp_ok:
-                    tcp_failed_count += 1
-                else:
-                    both_alive_count += 1
-                    alive_nodes_1.append(res_node)
+                if tcp_ok: alive_nodes_1.append(res_node)
 
-        print("\n" + "="*40)
-        print(" links.txt 连通性测试报告：")
-        print(f" - TCP 不通节点数: {tcp_failed_count} 个")
-        print(f" - TCP 存活可用节点数: {both_alive_count} 个")
-        print("========================================")
-    else:
-        alive_nodes_1 = []
-
-    # 2. 抓取 self.txt 的补充链接节点
-    ps_links = parse_pslinks_file()
+    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取，直接重命名并使用，不测活）
+    ps_tasks = parse_pslinks_file()
     alive_nodes_2 = []
-    if ps_links:
-        raw_text_2 = fetch_links_batch(ps_links)
-        raw_nodes_2 = extract_nodes_from_text(raw_text_2)
-        print(f"[抓取统计] self.txt 来源补充原始节点总数: {len(raw_nodes_2)} 个")
+    if ps_tasks:
+        raw_nodes_2 = extract_nodes_from_text(fetch_links_batch(ps_tasks))
+        print(f"[抓取统计] self.txt 来源双通道补充原始节点总数: {len(raw_nodes_2)} 个")
         if raw_nodes_2:
-            print("\n----------------------------------------")
-            print(" 正在对 self.txt 补充节点进行国别识别与统一重命名...")
-            print("----------------------------------------")
-            alive_nodes_2 = [rename_node(node) for node in raw_nodes_2]
+            # 直接去重并重命名，不经过 tcping 测活
+            alive_nodes_2 = list(set([rename_node(n) for n in raw_nodes_2]))
+            print(f"[提示] self.txt 提取后直接采用节点数: {len(alive_nodes_2)} 个")
 
-    # 3. 将两部分存活/补充节点直接合并
-    alive_nodes = alive_nodes_1 + alive_nodes_2
-        
+    # 3. 合并
+    alive_nodes = list(set(alive_nodes_1 + alive_nodes_2))
     ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
     other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
             
     def make_base64_file(filename, node_list):
-        content = "\n".join(node_list)
-        b64_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
         with open(filename, 'w', encoding='utf-8') as f:
-            f.write(b64_content)
+            f.write(base64.b64encode("\n".join(node_list).encode('utf-8')).decode('utf-8'))
 
     make_base64_file('ALL.txt', alive_nodes)
     make_base64_file('AI.txt', ai_nodes)
@@ -461,7 +344,6 @@ def main():
     print(f" - 最终有效可用节点总数 (ALL.txt):   {len(alive_nodes)} 个")
     print(f" - 其中 AI 友好节点       (AI.txt):    {len(ai_nodes)} 个")
     print(f" - 其中其他节点           (OTHER.txt): {len(other_nodes)} 个")
-    print(f" - 频道时间天数限制:                  {DAYS_LIMIT} 天")
     print("========================================")
 
 if __name__ == "__main__":
