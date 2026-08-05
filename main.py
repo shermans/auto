@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
-PROXY_SWITCH = 'N'  
+PROXY_SWITCH = 'Y'  
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
 DAYS_LIMIT = 7  
 # ========================================================
