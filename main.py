@@ -87,9 +87,9 @@ def parse_pslinks_file():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
-                # 任务 1：直接访问抓取（适合本身就是 Base64 订阅或直连网页的链接）
+                # 任务 1：直接访问抓取
                 ps_tasks.append(line)
-                # 任务 2：拼上转换接口再抓取（适合需要转换服务吐出 mixed 格式的订阅）
+                # 任务 2：拼上转换接口再抓取
                 converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
                 ps_tasks.append(converted_url)
                 
@@ -302,7 +302,7 @@ def main():
     print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
     print("========================================")
     
-    # 1. links.txt 处理（需要测活）
+    # 1. links.txt 处理（需要测活、去重、重命名）
     t_links, gh_links, chat_links = parse_links_file()
     raw_nodes_1 = extract_nodes_from_text(fetch_links_batch(t_links + gh_links + chat_links))
     print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_1)} 个")
@@ -315,19 +315,18 @@ def main():
                 res_node, tcp_ok, _ = future.result()
                 if tcp_ok: alive_nodes_1.append(res_node)
 
-    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取，直接重命名并使用，不测活）
+    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取，【不重命名、不去重、不测速】，直接采用）
     ps_tasks = parse_pslinks_file()
     alive_nodes_2 = []
     if ps_tasks:
         raw_nodes_2 = extract_nodes_from_text(fetch_links_batch(ps_tasks))
         print(f"[抓取统计] self.txt 来源双通道补充原始节点总数: {len(raw_nodes_2)} 个")
         if raw_nodes_2:
-            # 直接去重并重命名，不经过 tcping 测活
-            alive_nodes_2 = list(set([rename_node(n) for n in raw_nodes_2]))
+            alive_nodes_2 = raw_nodes_2  # 原封不动保留
             print(f"[提示] self.txt 提取后直接采用节点数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并
-    alive_nodes = list(set(alive_nodes_1 + alive_nodes_2))
+    # 3. 合并（links.txt 经过重命名/去重/测活，self.txt 原样直接合并）
+    alive_nodes = alive_nodes_1 + alive_nodes_2
     ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
     other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
             
@@ -341,9 +340,9 @@ def main():
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
-    print(f" - 最终有效可用节点总数 (ALL.txt):   {len(alive_nodes)} 个")
-    print(f" - 其中 AI 友好节点       (AI.txt):    {len(ai_nodes)} 个")
-    print(f" - 其中其他节点           (OTHER.txt): {len(other_nodes)} 个")
+    print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
+    print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
+    print(f" - 其中其他节点            (OTHER.txt): {len(other_nodes)} 个")
     print("========================================")
 
 if __name__ == "__main__":
