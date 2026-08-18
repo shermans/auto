@@ -266,6 +266,9 @@ def rename_node(node_str):
 def is_ai_friendly_node(node_str):
     return get_country_code(node_str) in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
 
+def is_us_node(node_str):
+    return get_country_code(node_str) == 'US'
+
 def test_tcping(node_str):
     try:
         host, port = None, None
@@ -327,9 +330,10 @@ def main():
             alive_nodes_2 = raw_nodes_2  
             print(f"[提示] self.txt 提取后直接采用节点数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并
+    # 3. 合并与分类
     alive_nodes = alive_nodes_1 + alive_nodes_2
     ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
+    us_nodes = [n for n in alive_nodes if is_us_node(n)]
     other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
             
     def make_base64_file(filename, node_list):
@@ -338,12 +342,14 @@ def main():
 
     make_base64_file('ALL.txt', alive_nodes)
     make_base64_file('AI.txt', ai_nodes)
+    make_base64_file('US.txt', us_nodes)
     make_base64_file('OTHER.txt', other_nodes)
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
     print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
     print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
+    print(f" - 其中美国专线节点        (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中其他节点            (OTHER.txt): {len(other_nodes)} 个")
     print("========================================")
 
