@@ -33,7 +33,6 @@ def safe_base64_decode(s):
     s = s.strip()
     if not s:
         return ""
-    # 替换 URL 安全的字符
     s = s.replace('-', '+').replace('_', '/')
     padding = len(s) % 4
     if padding:
@@ -147,7 +146,6 @@ def fetch_single_url(url, headers):
                     converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
                     extracted_subs.append(converted_sub)
 
-            # 尝试同时解析原文和 Base64 解码后的内容
             decoded_page = safe_base64_decode(page_text)
             
             found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
@@ -183,7 +181,6 @@ def fetch_links_batch(link_list):
             for u in current_batch:
                 processed_urls.add(u)
             
-            # 清空队列，准备接收新发现的子链接
             queue.clear()
             
             if not current_batch:
@@ -229,16 +226,28 @@ def extract_node_host(node_str):
         pass
     return "UnknownIP"
 
-def get_country_code(node_str):
-    search_target = urllib.parse.unquote(node_str).lower()
-    
-    # 1. 强制优先匹配 US（防止类似 SG-18-ak-us01 被别的国家规则提前劫持）
-    us_keywords = ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
-    for kw in us_keywords:
-        if re.search(r'\b' + re.escape(kw) + r'\b', search_target) or 'us' in node_str.lower().split('-'):
-            return 'US'
+def check_keyword_match(target_str, keywords, use_word_boundary=True):
+    search_target = urllib.parse.unquote(target_str).lower()
+    for kw in keywords:
+        kw_lower = kw.lower()
+        if use_word_boundary:
+            if re.search(r'\b' + re.escape(kw_lower) + r'\b', search_target) or kw_lower in search_target.split('-'):
+                return True
+        else:
+            if kw_lower in search_target:
+                return True
+    return False
 
-    # 2. 如果确定不是 US，再匹配其他国家
+def get_country_code(node_str):
+    host = extract_node_host(node_str)
+    combined_target = f"{node_str} {host}"
+
+    # 1. 强制优先匹配 US
+    us_keywords = ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
+    if check_keyword_match(combined_target, us_keywords, use_word_boundary=True):
+        return 'US'
+
+    # 2. 匹配其他国家
     country_mapping = {
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
         'JP': ['jp', 'japan', '日本', '东京', '大阪'],
@@ -254,9 +263,9 @@ def get_country_code(node_str):
     }
     
     for code, keywords in country_mapping.items():
-        for kw in keywords:
-            if re.search(r'\b' + re.escape(kw) + r'\b', search_target):
-                return code
+        if check_keyword_match(combined_target, keywords, use_word_boundary=True):
+            return code
+            
     return "OTH"
 
 def rename_node(node_str):
@@ -269,11 +278,15 @@ def rename_node(node_str):
     else:
         return f"{node_str}#{urllib.parse.quote(new_name)}"
 
-def is_ai_friendly_node(node_str):
-    return get_country_code(node_str) in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
-
 def is_us_node(node_str):
+    # 只要名称或 IP 中包含美国特征即算入 US
     return get_country_code(node_str) == 'US'
+
+def is_ai_friendly_node(node_str):
+    # 在非 US 的前提下，若国家代码属于指定的 AI 组列表则算入 AI
+    code = get_country_code(node_str)
+    ai_countries = {'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
+    return code in ai_countries
 
 def test_tcping(node_str):
     try:
@@ -338,24 +351,24 @@ def main():
 
     # 3. 合并与分类
     alive_nodes = alive_nodes_1 + alive_nodes_2
-    ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
-    other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
+    ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
+    other_nodes = [n for n in alive_nodes if not is_us_node(n) and not is_ai_friendly_node(n)]
             
     def make_base64_file(filename, node_list):
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(base64.b64encode("\n".join(node_list).encode('utf-8')).decode('utf-8'))
 
     make_base64_file('ALL.txt', alive_nodes)
-    make_base64_file('AI.txt', ai_nodes)
     make_base64_file('US.txt', us_nodes)
+    make_base64_file('AI.txt', ai_nodes)
     make_base64_file('OTHER.txt', other_nodes)
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
     print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
-    print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
     print(f" - 其中美国专属节点        (US.txt):    {len(us_nodes)} 个")
+    print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
     print(f" - 其中其他节点            (OTHER.txt): {len(other_nodes)} 个")
     print("========================================")
 
