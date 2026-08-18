@@ -31,12 +31,16 @@ PROTOCOL_REGEX_STR = r"((?:" + "|".join(SUPPORTED_SCHEMES) + r")://[^\s<>\"']+)"
 
 def safe_base64_decode(s):
     s = s.strip()
+    if not s:
+        return ""
+    # 替换 URL 安全的字符
+    s = s.replace('-', '+').replace('_', '/')
     padding = len(s) % 4
     if padding:
         s += '=' * (4 - padding)
     try:
         decoded_bytes = base64.b64decode(s)
-        for encoding in ['utf-8', 'gbk', 'latin1']:
+        for encoding in ['utf-8', 'gbk']:
             try:
                 return decoded_bytes.decode(encoding)
             except UnicodeDecodeError:
@@ -74,7 +78,6 @@ def parse_links_file():
     return t_me_links, github_links, chat_links
 
 def parse_pslinks_file():
-    """解析 self.txt：为每个链接同时生成‘直接访问抓取’和‘转换接口抓取’两个独立任务"""
     ps_path = 'self.txt'
     ps_tasks = []
     if not os.path.exists(ps_path):
@@ -87,9 +90,7 @@ def parse_pslinks_file():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
-                # 任务 1：直接访问抓取
                 ps_tasks.append(line)
-                # 任务 2：拼上转换接口再抓取
                 converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
                 ps_tasks.append(converted_url)
                 
@@ -146,8 +147,10 @@ def fetch_single_url(url, headers):
                     converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
                     extracted_subs.append(converted_sub)
 
-            found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
+            # 尝试同时解析原文和 Base64 解码后的内容
             decoded_page = safe_base64_decode(page_text)
+            
+            found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
             found_in_decoded = re.findall(PROTOCOL_REGEX_STR, decoded_page, re.IGNORECASE)
             
             total_found = len(set(found_in_page + found_in_decoded))
@@ -175,28 +178,26 @@ def fetch_links_batch(link_list):
     queue = list(link_list)
 
     with ThreadPoolExecutor(max_workers=50) as executor:
-        future_to_url = {}
-        
         while queue:
             current_batch = [u for u in queue if u not in processed_urls]
             for u in current_batch:
                 processed_urls.add(u)
+            
+            # 清空队列，准备接收新发现的子链接
             queue.clear()
             
             if not current_batch:
                 break
                 
-            for url in current_batch:
-                future_to_url[executor.submit(fetch_single_url, url, headers)] = url
-                
-            for future in list(as_completed(future_to_url)):
+            future_to_url = {executor.submit(fetch_single_url, url, headers): url for url in current_batch}
+            
+            for future in as_completed(future_to_url):
                 page_text, new_subs = future.result()
                 if page_text:
                     all_raw_text += page_text + "\n"
                 for sub in new_subs:
                     if sub not in processed_urls and sub not in queue:
                         queue.append(sub)
-                future_to_url.pop(future, None)
 
     return all_raw_text
 
@@ -311,21 +312,22 @@ def main():
     if raw_nodes_1:
         nodes_1 = list(set([rename_node(n) for n in raw_nodes_1]))
         with ThreadPoolExecutor(max_workers=200) as executor:
-            for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in nodes_1}):
+            future_map = {executor.submit(test_node_comprehensive, n): n for n in nodes_1}
+            for future in as_completed(future_map):
                 res_node, tcp_ok, _ = future.result()
                 if tcp_ok: alive_nodes_1.append(res_node)
 
-    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取，【不重命名、不去重、不测速】，直接采用）
+    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取）
     ps_tasks = parse_pslinks_file()
     alive_nodes_2 = []
     if ps_tasks:
         raw_nodes_2 = extract_nodes_from_text(fetch_links_batch(ps_tasks))
         print(f"[抓取统计] self.txt 来源双通道补充原始节点总数: {len(raw_nodes_2)} 个")
         if raw_nodes_2:
-            alive_nodes_2 = raw_nodes_2  # 原封不动保留
+            alive_nodes_2 = raw_nodes_2  
             print(f"[提示] self.txt 提取后直接采用节点数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并（links.txt 经过重命名/去重/测活，self.txt 原样直接合并）
+    # 3. 合并
     alive_nodes = alive_nodes_1 + alive_nodes_2
     ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
     other_nodes = [n for n in alive_nodes if not is_ai_friendly_node(n)]
