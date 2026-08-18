@@ -37,7 +37,7 @@ jobs:
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
         # 将生成的文件加入暂存区
-        git add ALL.txt AI.txt OTHER.txt
+        git add ALL.txt US.txt AI.txt OTHER.txt
         
         # 检查是否有实际改动，没有改动则安全退出
         if git diff --staged --quiet; then
