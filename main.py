@@ -230,8 +230,16 @@ def extract_node_host(node_str):
     return "UnknownIP"
 
 def get_country_code(node_str):
+    search_target = urllib.parse.unquote(node_str).lower()
+    
+    # 1. 强制优先匹配 US（防止类似 SG-18-ak-us01 被别的国家规则提前劫持）
+    us_keywords = ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
+    for kw in us_keywords:
+        if re.search(r'\b' + re.escape(kw) + r'\b', search_target) or 'us' in node_str.lower().split('-'):
+            return 'US'
+
+    # 2. 如果确定不是 US，再匹配其他国家
     country_mapping = {
-        'US': ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯'],
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
         'JP': ['jp', 'japan', '日本', '东京', '大阪'],
         'SG': ['sg', 'singapore', '新加坡', '狮城'],
@@ -244,12 +252,10 @@ def get_country_code(node_str):
         'CA': ['ca', 'canada', '加拿大', '温哥华', '多伦多'],
         'AU': ['au', 'australia', '澳大利亚', '悉尼', '墨尔本']
     }
-    name_part = urllib.parse.unquote(node_str.split('#')[-1]) if '#' in node_str else ""
-    search_target = (name_part + " " + node_str).lower()
+    
     for code, keywords in country_mapping.items():
         for kw in keywords:
-            pattern = r'(?i)\b' + re.escape(kw) + r'\b' if len(kw) <= 3 else r'(?i)' + re.escape(kw)
-            if re.search(pattern, search_target):
+            if re.search(r'\b' + re.escape(kw) + r'\b', search_target):
                 return code
     return "OTH"
 
@@ -349,7 +355,7 @@ def main():
     print(" 全部处理完成！最终结果统计：")
     print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
     print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
-    print(f" - 其中美国专线节点        (US.txt):    {len(us_nodes)} 个")
+    print(f" - 其中美国专属节点        (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中其他节点            (OTHER.txt): {len(other_nodes)} 个")
     print("========================================")
 
