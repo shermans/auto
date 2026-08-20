@@ -271,8 +271,9 @@ def get_country_code(node_str):
 def rename_node(node_str):
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
-    current_day = datetime.now().strftime('%d')
-    new_name = f"{country}-{current_day}-{host}"
+    # 修改处：增加小时 %H，生成“日期-整点”格式（如 20-11）
+    current_time = datetime.now().strftime('%d-%H')
+    new_name = f"{country}-{current_time}-{host}"
     if '#' in node_str:
         return f"{node_str.rsplit('#', 1)[0]}#{urllib.parse.quote(new_name)}"
     else:
