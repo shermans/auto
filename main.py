@@ -2,7 +2,6 @@
 import base64
 import json
 import os
-import re
 import socket
 import urllib.parse
 from urllib.parse import urlparse
@@ -11,9 +10,9 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
-PROXY_SWITCH = 'N'  
+PROXY_SWITCH = 'N'   
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
-DAYS_LIMIT = 7  
+DAYS_LIMIT = 7   
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
@@ -22,31 +21,77 @@ PROXIES = {
     "https": "http://127.0.0.1:10808"
 } if USE_PROXY else None
 
-SUPPORTED_SCHEMES = (
-    "vmess", "vless", "trojan", "ss", "ssr", 
-    "hysteria", "hy2", "tuic", "anytls", 
-    "juicity", "wireguard", "wg", "ssh", "socks5", "http"
+# 支持的代理协议头（v2rayN 识别标准）
+PROTOCOLS = (
+    "vmess://", "vless://", "ss://", "ssr://", "trojan://",
+    "hysteria://", "hysteria2://", "hy2://", "tuic://",
+    "juicity://", "wireguard://", "wg://", "socks://", "socks5://", "http://"
 )
-PROTOCOL_REGEX_STR = r"((?:" + "|".join(SUPPORTED_SCHEMES) + r")://[^\s<>\"']+)"
 
-def safe_base64_decode(s):
-    s = s.strip()
+def v2rayn_smart_parse(raw_content):
+    """
+    完全参照 v2rayN 的订阅解析逻辑:
+    1. 尝试直接按行寻找节点
+    2. 若找到则返回；若没找到，尝试 Base64 强行容错解码后再找
+    """
+    if not raw_content:
+        return []
+
+    # 剔除 UTF-8 BOM 头与前后空格
+    content = raw_content.lstrip('\ufeff').strip()
+    
+    # --- 第一步：直接提取（针对未Base64编码的明文订阅/节点列表）---
+    nodes = extract_nodes_from_lines(content)
+    if nodes:
+        return nodes
+
+    # --- 第二步：Base64 容错解码（针对Base64编码的订阅）---
+    decoded_text = v2rayn_base64_decode(content)
+    if decoded_text:
+        nodes = extract_nodes_from_lines(decoded_text)
+        if nodes:
+            return nodes
+
+    return []
+
+def v2rayn_base64_decode(s):
+    """v2rayN 级别的 Base64 宽松解码器"""
+    # 清理非 Base64 字符（换行、空格等）
+    s = "".join(s.split())
     if not s:
         return ""
+    
+    # 替换 URL Safe 字符
     s = s.replace('-', '+').replace('_', '/')
+    
+    # 自动补全 Padding '='
     padding = len(s) % 4
     if padding:
         s += '=' * (4 - padding)
+        
     try:
         decoded_bytes = base64.b64decode(s)
-        for encoding in ['utf-8', 'gbk']:
-            try:
-                return decoded_bytes.decode(encoding)
-            except UnicodeDecodeError:
-                continue
+        # 容错解码：用 utf-8 解码，遇到非法字符直接忽略 (errors='ignore')，绝不抛出异常！
+        return decoded_bytes.decode('utf-8', errors='ignore')
     except Exception:
-        pass
-    return ""
+        return ""
+
+def extract_nodes_from_lines(text):
+    """按行提取以标准协议开头的节点"""
+    nodes = []
+    for line in text.splitlines():
+        line = line.strip()
+        # 跳过空行和注释
+        if not line or line.startswith('#') or line.startswith('//'):
+            continue
+            
+        # 匹配协议前缀
+        line_lower = line.lower()
+        if any(line_lower.startswith(proto) for proto in PROTOCOLS):
+            # 清理末尾可能夹带的符号
+            clean_node = line.rstrip('.,;\r\n ')
+            nodes.append(clean_node)
+    return nodes
 
 def parse_links_file():
     links_path = 'links.txt'
@@ -60,15 +105,9 @@ def parse_links_file():
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-            if '[t.me]' in line.lower():
-                current_group = 't.me'
-                continue
-            elif '[github]' in line.lower():
-                current_group = 'github'
-                continue
-            elif '[chat]' in line.lower():
-                current_group = 'chat'
-                continue
+            if '[t.me]' in line.lower(): current_group = 't.me'; continue
+            elif '[github]' in line.lower(): current_group = 'github'; continue
+            elif '[chat]' in line.lower(): current_group = 'chat'; continue
             
             if line.startswith('http://') or line.startswith('https://'):
                 if current_group == 't.me': t_me_links.append(line)
@@ -89,130 +128,51 @@ def parse_pslinks_file():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
+                # 1. 原始订阅链接
                 ps_tasks.append(line)
+                # 2. 转换后的订阅链接
                 converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
                 ps_tasks.append(converted_url)
                 
-    print(f"[提示] 成功从 self.txt 读取链接，已开启双通道（直接抓 + 转换抓），共生成 {len(ps_tasks)} 个请求任务。")
+    print(f"[提示] 成功从 self.txt 读取链接，双通道生成 {len(ps_tasks)} 个请求任务。")
     return ps_tasks
 
-def filter_tme_messages_by_days(html_content, days_limit):
-    if days_limit <= 0:
-        return html_content
-    now = datetime.now(timezone.utc)
-    cutoff_time = now - timedelta(days=days_limit)
-    message_blocks = re.split(r'(?=<div class="tgme_widget_message\s)', html_content)
-    filtered_html = ""
-    for block in message_blocks:
-        time_match = re.search(r'datetime="([^"]+)"', block)
-        if time_match:
-            try:
-                msg_time = datetime.fromisoformat(time_match.group(1).replace('Z', '+00:00'))
-                if msg_time >= cutoff_time:
-                    filtered_html += block + "\n"
-            except Exception:
-                filtered_html += block + "\n"
-        else:
-            filtered_html += block + "\n"
-    return filtered_html
-
-def is_download_link(url_str):
-    ignored_extensions = (
-        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
-        '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi',
-        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
-        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.flv', '.wav',
-        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-        '.txt', '.json', '.xml', '.csv'
-    )
-    parsed_path = urlparse(url_str).path.lower()
-    return any(parsed_path.endswith(ext) for ext in ignored_extensions)
-
 def fetch_single_url(url, headers):
-    print(f"[-] 正在抓取: {url}")
     try:
         resp = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         if resp.status_code == 200:
-            page_text = resp.text
-            extracted_subs = []
-            
-            if "t.me" in url:
-                page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
-                found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
-                for sub_link in found_sub_links:
-                    if any(x in sub_link for x in ["t.me", "telegram.org", "w3.org"]) or is_download_link(sub_link):
-                        continue
-                    sub_link = sub_link.rstrip('.,;\'">)')
-                    converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
-                    extracted_subs.append(converted_sub)
-
-            decoded_page = safe_base64_decode(page_text)
-            
-            found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
-            found_in_decoded = re.findall(PROTOCOL_REGEX_STR, decoded_page, re.IGNORECASE)
-            
-            total_found = len(set(found_in_page + found_in_decoded))
-            if total_found > 0:
-                print(f"    -> [{url}] 成功获取，提取到节点: {total_found} 个")
-            
-            combined_text = page_text + "\n" + decoded_page + "\n"
-            return combined_text, extracted_subs
+            # 采用 v2rayN 逻辑解析提取节点
+            nodes = v2rayn_smart_parse(resp.text)
+            print(f"    -> [{url}] 抓取成功，提取节点: {len(nodes)} 个")
+            return nodes
         else:
             print(f"    -> [{url}] 抓取失败，HTTP 状态码: {resp.status_code}")
     except Exception as e:
         print(f"    -> [{url}] 请求异常: {e}")
-    return "", []
+    return []
 
 def fetch_links_batch(link_list):
     if not link_list:
-        return ""
+        return []
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        'User-Agent': 'v2rayN/6.23'  # 模拟 v2rayN 客户端 UA，防止被订阅服务器拦截
     }
     
-    all_raw_text = ""
-    processed_urls = set()
-    queue = list(link_list)
-
+    all_nodes = []
     with ThreadPoolExecutor(max_workers=50) as executor:
-        while queue:
-            current_batch = [u for u in queue if u not in processed_urls]
-            for u in current_batch:
-                processed_urls.add(u)
-            
-            queue.clear()
-            
-            if not current_batch:
-                break
-                
-            future_to_url = {executor.submit(fetch_single_url, url, headers): url for url in current_batch}
-            
-            for future in as_completed(future_to_url):
-                page_text, new_subs = future.result()
-                if page_text:
-                    all_raw_text += page_text + "\n"
-                for sub in new_subs:
-                    if sub not in processed_urls and sub not in queue:
-                        queue.append(sub)
+        future_to_url = {executor.submit(fetch_single_url, url, headers): url for url in link_list}
+        for future in as_completed(future_to_url):
+            nodes = future.result()
+            if nodes:
+                all_nodes.extend(nodes)
 
-    return all_raw_text
-
-def extract_nodes_from_text(raw_text):
-    nodes = []
-    pattern = re.compile(PROTOCOL_REGEX_STR, re.IGNORECASE)
-    for node in pattern.findall(raw_text):
-        nodes.append(node.strip().rstrip('.,;'))
-    for line in raw_text.splitlines():
-        line_clean = line.strip()
-        if "://" in line_clean and not line_clean.startswith("http"):
-            nodes.append(line_clean.rstrip('.,;'))
-    return nodes
+    return all_nodes
 
 def extract_node_host(node_str):
     try:
         if node_str.lower().startswith('vmess://'):
-            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
+            decoded_json_str = v2rayn_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
             if decoded_json_str:
                 host = json.loads(decoded_json_str).get('add')
                 if host: return str(host).strip()
@@ -226,28 +186,21 @@ def extract_node_host(node_str):
         pass
     return "UnknownIP"
 
-def check_keyword_match(target_str, keywords, use_word_boundary=True):
+def check_keyword_match(target_str, keywords):
     search_target = urllib.parse.unquote(target_str).lower()
     for kw in keywords:
-        kw_lower = kw.lower()
-        if use_word_boundary:
-            if re.search(r'\b' + re.escape(kw_lower) + r'\b', search_target) or kw_lower in search_target.split('-'):
-                return True
-        else:
-            if kw_lower in search_target:
-                return True
+        if kw.lower() in search_target:
+            return True
     return False
 
 def get_country_code(node_str):
     host = extract_node_host(node_str)
     combined_target = f"{node_str} {host}"
 
-    # 1. 强制优先匹配 US
     us_keywords = ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
-    if check_keyword_match(combined_target, us_keywords, use_word_boundary=True):
+    if check_keyword_match(combined_target, us_keywords):
         return 'US'
 
-    # 2. 匹配其他国家
     country_mapping = {
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
         'JP': ['jp', 'japan', '日本', '东京', '大阪'],
@@ -263,7 +216,7 @@ def get_country_code(node_str):
     }
     
     for code, keywords in country_mapping.items():
-        if check_keyword_match(combined_target, keywords, use_word_boundary=True):
+        if check_keyword_match(combined_target, keywords):
             return code
             
     return "OTH"
@@ -271,8 +224,6 @@ def get_country_code(node_str):
 def rename_node(node_str):
     country = get_country_code(node_str)
     host = extract_node_host(node_str)
-    
-    # 强制设置时区为北京时间 (UTC+8)
     beijing_tz = timezone(timedelta(hours=8))
     current_time = datetime.now(beijing_tz).strftime('%d-%H')
     
@@ -283,11 +234,9 @@ def rename_node(node_str):
         return f"{node_str}#{urllib.parse.quote(new_name)}"
 
 def is_us_node(node_str):
-    # 只要名称或 IP 中包含美国特征即算入 US
     return get_country_code(node_str) == 'US'
 
 def is_ai_friendly_node(node_str):
-    # 在非 US 的前提下，若国家代码属于指定的 AI 组列表则算入 AI
     code = get_country_code(node_str)
     ai_countries = {'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
     return code in ai_countries
@@ -296,7 +245,7 @@ def test_tcping(node_str):
     try:
         host, port = None, None
         if node_str.lower().startswith('vmess://'):
-            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
+            decoded_json_str = v2rayn_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
             if decoded_json_str:
                 node_data = json.loads(decoded_json_str)
                 host, port = node_data.get('add'), int(node_data.get('port', 443))
@@ -319,42 +268,36 @@ def test_tcping(node_str):
     except Exception:
         return False
 
-def test_node_comprehensive(node_str):
-    tcp_ok = test_tcping(node_str)
-    return node_str, tcp_ok, tcp_ok
-
 def main():
     print("========================================")
     proxy_status = f"开启 (10808)" if USE_PROXY else "关闭 (直连)"
-    print(f" 开始并发抓取网页与解析接口 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
+    print(f" 开始抓取 | 代理状态: {proxy_status}")
     print("========================================")
     
-    # 1. links.txt 处理（需要测活、去重、重命名）
+    # 1. 处理 links.txt（抓取、测活、去重、重命名）
     t_links, gh_links, chat_links = parse_links_file()
-    raw_nodes_1 = extract_nodes_from_text(fetch_links_batch(t_links + gh_links + chat_links))
-    print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_1)} 个")
+    raw_nodes_1 = fetch_links_batch(t_links + gh_links + chat_links)
+    print(f"\n[抓取统计] links.txt 提取原始节点总数: {len(raw_nodes_1)} 个")
     
     alive_nodes_1 = []
     if raw_nodes_1:
         nodes_1 = list(set([rename_node(n) for n in raw_nodes_1]))
         with ThreadPoolExecutor(max_workers=200) as executor:
-            future_map = {executor.submit(test_node_comprehensive, n): n for n in nodes_1}
+            future_map = {executor.submit(test_tcping, n): n for n in nodes_1}
             for future in as_completed(future_map):
-                res_node, tcp_ok, _ = future.result()
-                if tcp_ok: alive_nodes_1.append(res_node)
+                if future.result():
+                    alive_nodes_1.append(future_map[future])
 
-    # 2. self.txt 补充处理（双通道：直接抓取 + 转换抓取）
+    # 2. 处理 self.txt（直接抓取 + API转换抓取，保留原样）
     ps_tasks = parse_pslinks_file()
     alive_nodes_2 = []
     if ps_tasks:
-        raw_nodes_2 = extract_nodes_from_text(fetch_links_batch(ps_tasks))
-        print(f"[抓取统计] self.txt 来源双通道补充原始节点总数: {len(raw_nodes_2)} 个")
-        if raw_nodes_2:
-            alive_nodes_2 = raw_nodes_2  
-            print(f"[提示] self.txt 提取后直接采用节点数: {len(alive_nodes_2)} 个")
+        alive_nodes_2 = fetch_links_batch(ps_tasks)
+        print(f"[抓取统计] self.txt 提取节点总数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并与分类
-    alive_nodes = alive_nodes_1 + alive_nodes_2
+    # 3. 合并与去重导出
+    alive_nodes = list(set(alive_nodes_1 + alive_nodes_2))
+    
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
     ai_nodes = [n for n in alive_nodes if is_ai_friendly_node(n)]
     other_nodes = [n for n in alive_nodes if not is_us_node(n) and not is_ai_friendly_node(n)]
