@@ -6,6 +6,11 @@ https://t.me/s/dingyue_center
 # https://t.me/s/vpnfail_v2ray
 https://t.me/s/SSRSUB
 https://t.me/s/QiangLieTuiJian
+https://t.me/vpnfail_v2ray
+https://t.me/allproconf
+https://t.me/ConfigsHUB
+https://t.me/filmetadris
+https://t.me/AzadNet
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
