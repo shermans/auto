@@ -14,9 +14,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
 PROXY_SWITCH = 'N'    
-CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
-# ACL4SSR 精简版转换 API (目标格式: Clash)
-ACL_MINI_CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=clash&config=https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Mini.ini&url="
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
@@ -31,7 +28,7 @@ PROTOCOLS = (
     "juicity://", "wireguard://", "wg://", "socks://", "socks5://", "http://"
 )
 
-UDP_PROTOCOLS = ("hysteria://", "hysteria2://", "hy2://", "tuic://", "juicity://", "wireguard://", "wg://")
+UDP_PROTOCOLS = ("hysteria://", "hysteria2://", "hy2://", "tuic://", "juicity://", "wireguard://")
 
 US_KEYWORDS = ['us', 'usa', 'united states', 'america', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯']
 
@@ -82,51 +79,109 @@ def encode_to_base64_file(filename, node_list):
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(encoded)
 
-def convert_to_acl_mini(target_filename, source_filename):
+def generate_clash_yaml_locally(target_filename, source_filename):
     """
-    通过 GitHub Raw 链接地址向 Subconverter 请求转换，规避 URL 超长导致的 API 错误
+    【纯本地编写】拼接生成 ACL4SSR 精简风格的 Clash YAML 订阅文件
+    无需请求任何外部 API，零报错、速度极快
     """
-    # 1. 获取 GitHub Actions 环境变量
-    repo_slug = os.getenv('GITHUB_REPOSITORY', '')  # 格式: username/repo
-    ref_name = os.getenv('GITHUB_REF_NAME', 'main') # 默认分支 main
-    
-    if not repo_slug:
-        # 本地运行降级处理：采用 Data URL
-        try:
-            if not os.path.exists(source_filename):
-                return
-            with open(source_filename, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-            if not content:
-                with open(target_filename, 'w', encoding='utf-8') as f:
-                    f.write("# 没有可用节点\n")
-                return
-            raw_url = f"data:text/plain;base64,{content}"
-        except Exception as e:
-            print(f"    -> [{target_filename}] 本地读取源文件失败: {e}")
-            return
-    else:
-        # 在 GitHub Actions 中：通过 GitHub Raw 访问刚生成的原始文本
-        raw_url = f"https://raw.githubusercontent.com/{repo_slug}/{ref_name}/{source_filename}"
-
-    # 2. 构造 Subconverter API 请求
-    req_url = ACL_MINI_CONVERT_API + urllib.parse.quote(raw_url, safe='')
+    if not os.path.exists(source_filename):
+        return
 
     try:
-        resp = requests.get(req_url, timeout=30, proxies=PROXIES)
-        # 简单校验返回内容是否包含 Clash 配置核心关键字
-        if resp.status_code == 200 and ("proxies:" in resp.text or "proxy-groups:" in resp.text):
-            with open(target_filename, 'w', encoding='utf-8') as f:
-                f.write(resp.text)
-            print(f"    -> [{target_filename}] 转换 ACL4SSR 精简版成功！")
-        else:
-            print(f"    -> [{target_filename}] 转换失败，HTTP 状态码: {resp.status_code}")
-            with open(target_filename, 'w', encoding='utf-8') as f:
-                f.write(f"# ACL4SSR 转换接口返回错误 (HTTP {resp.status_code})\n")
+        with open(source_filename, 'r', encoding='utf-8') as f:
+            encoded_content = f.read().strip()
+        if not encoded_content:
+            return
+        node_text = v2rayn_base64_decode(encoded_content)
+        raw_nodes = extract_nodes_from_lines(node_text)
     except Exception as e:
-        print(f"    -> [{target_filename}] 请求转换接口异常: {e}")
+        print(f"    -> [{target_filename}] 本地读取源文件失败: {e}")
+        return
+
+    if not raw_nodes:
         with open(target_filename, 'w', encoding='utf-8') as f:
-            f.write(f"# 转换异常: {e}\n")
+            f.write("# 没有可用节点\n")
+        return
+
+    # 提炼节点别名列表，用于策略组引用
+    proxy_names = []
+    for idx, node in enumerate(raw_nodes):
+        name = f"Node_{idx+1}"
+        if '#' in node:
+            try:
+                name = urllib.parse.unquote(node.split('#')[-1])
+            except Exception:
+                pass
+        proxy_names.append(name)
+
+    # 1. 基础配置及全局参数
+    yaml_lines = [
+        "# ==========================================",
+        "# 本地自动生成的 Clash 配置文件 (ACL4SSR 精简版)",
+        f"# 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "# ==========================================",
+        "port: 7890",
+        "socks-port: 7891",
+        "allow-lan: true",
+        "mode: rule",
+        "log-level: info",
+        "external-controller: 127.0.0.1:9090",
+        "",
+        "# ----------------- 策略组 -----------------",
+        "proxy-groups:",
+        "  - name: 🚀 节点选择",
+        "    type: select",
+        "    proxies:",
+        "      - ♻️ 自动选择",
+        "      - DIRECT"
+    ]
+
+    for name in proxy_names:
+        yaml_lines.append(f"      - \"{name}\"")
+
+    yaml_lines.extend([
+        "",
+        "  - name: ♻️ 自动选择",
+        "    type: url-test",
+        "    url: http://www.gstatic.com/generate_204",
+        "    interval: 300",
+        "    tolerance: 50",
+        "    proxies:"
+    ])
+
+    for name in proxy_names:
+        yaml_lines.append(f"      - \"{name}\"")
+
+    yaml_lines.extend([
+        "",
+        "  - name: 🐟 漏网之鱼",
+        "    type: select",
+        "    proxies:",
+        "      - 🚀 节点选择",
+        "      - DIRECT",
+        "",
+        "# ----------------- 节点定义 -----------------",
+        "proxies:"
+    ])
+
+    # 2. 插入节点 URI 链接或明文配置
+    for node in raw_nodes:
+        yaml_lines.append(f"  - {node}")
+
+    # 3. 基础 ACL4SSR 规则分流
+    yaml_lines.extend([
+        "",
+        "# ----------------- 分流规则 -----------------",
+        "rules:",
+        "  - GEOIP,LAN,DIRECT",
+        "  - GEOIP,CN,DIRECT",
+        "  - MATCH,🚀 节点选择"
+    ])
+
+    # 保存为本地文件
+    with open(target_filename, 'w', encoding='utf-8') as f:
+        f.write("\n".join(yaml_lines))
+    print(f"    -> [{target_filename}] 本地成功拼接并导出 Clash 配置！")
 
 def extract_node_info(node_str):
     node_lower = node_str.lower()
@@ -152,7 +207,6 @@ def extract_node_info(node_str):
     return host, port
 
 def is_us_raw_node(node_str):
-    """判断原始节点字符串是否为美国节点（不修改节点内容）"""
     host, _ = extract_node_info(node_str)
     host_str = host if host else ""
     target_text = urllib.parse.unquote(f"{node_str} {host_str}").lower()
@@ -188,10 +242,9 @@ def fetch_links_batch(link_list):
 
     return all_nodes, link_details
 
-# ==================== 专属通道：self.txt 处理 (不测速/不改名/不去重) ====================
+# ==================== 专属通道：self.txt 处理 ====================
 
 def process_self_nodes():
-    """独立处理 self.txt 链接，生成 SALL.txt 和 SUS.txt"""
     ps_path = 'self.txt'
     if not os.path.exists(ps_path):
         print(f"\n[提示] 未在同路径下找到 {ps_path} 文件，跳过专属通道。")
@@ -206,21 +259,12 @@ def process_self_nodes():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
-                # 1. 原始链接
                 ps_tasks.append(line)
-                # 2. 拼接 subconverter 转换后的链接
-                converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
-                ps_tasks.append(converted_url)
 
-    print(f"\n[专属通道] 从 self.txt 提取链接，已创建 {len(ps_tasks)} 个双通道请求任务...")
-    
-    # 抓取原始节点列表（保持原始顺序，不去重）
+    print(f"\n[专属通道] 从 self.txt 提取链接，已创建 {len(ps_tasks)} 个抓取任务...")
     raw_sall_nodes, self_details = fetch_links_batch(ps_tasks)
-    
-    # 筛选美国节点（仅匹配地区，不更名、不去重）
     raw_sus_nodes = [n for n in raw_sall_nodes if is_us_raw_node(n)]
     
-    # 输出 Base64 文件
     encode_to_base64_file('SALL.txt', raw_sall_nodes)
     encode_to_base64_file('SUS.txt', raw_sus_nodes)
     
@@ -357,20 +401,18 @@ def main():
     print(f" 开始执行任务 | 代理状态: {'开启' if USE_PROXY else '直连'}")
     print("========================================")
     
-    # 1. 处理专属通道 self.txt (独立、不测速、不去重、不改名)
+    # 1. 处理专属通道 self.txt
     sall_nodes, sus_nodes, self_details = process_self_nodes()
 
-    # 2. 处理公共通道 links.txt (三轮严苛测活、更名、去重)
+    # 2. 处理公共通道 links.txt
     t_links, gh_links, chat_links = parse_links_file()
     raw_nodes, public_details = fetch_links_batch(t_links + gh_links + chat_links)
     print(f"\n[公共通道] links.txt 提取节点: {len(raw_nodes)} 个")
     
     alive_nodes = []
     if raw_nodes:
-        # 重命名并去重
         nodes_to_test = list(set([rename_node(n) for n in raw_nodes]))
         
-        # 第一轮：TCP 极速粗筛
         print(f"[阶段 1/3] 极速粗筛 (待测: {len(nodes_to_test)} 个)...")
         p1_survivors = []
         with ThreadPoolExecutor(max_workers=200) as executor:
@@ -379,7 +421,6 @@ def main():
                 if future.result(): p1_survivors.append(future_map[future])
         print(f"    -> 第一轮幸存: {len(p1_survivors)} 个")
 
-        # 第二轮：TLS 深度精筛
         print(f"[阶段 2/3] TLS 深度精筛 (待测: {len(p1_survivors)} 个)...")
         p2_survivors = []
         with ThreadPoolExecutor(max_workers=60) as executor:
@@ -388,31 +429,28 @@ def main():
                 if future.result(): p2_survivors.append(future_map[future])
         print(f"    -> 第二轮幸存: {len(p2_survivors)} 个")
 
-        # 第三轮：sing-box 真连接校验
         alive_nodes = phase3_singbox_check(p2_survivors)
 
-    # 3. 输出抓取统计文件 linksdetails.txt
+    # 3. 输出抓取统计文件
     all_details = {**public_details, **self_details}
     with open('linksdetails.txt', 'w', encoding='utf-8') as f:
         f.write("========== 链接抓取节点数统计 ==========\n")
         for url, count in all_details.items():
             f.write(f"链接: {url}\n抓取节点数: {count} 个\n" + "-"*40 + "\n")
 
-    # 4. 导出公共分类节点列表
+    # 4. 导出公共分类 Base64 文本
     us_nodes = [n for n in alive_nodes if get_country_code(n) == 'US']
     ai_nodes = [n for n in alive_nodes if get_country_code(n) in {'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}]
     other_nodes = [n for n in alive_nodes if get_country_code(n) not in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}]
             
-    # 生成基础 Base64 记事本
     encode_to_base64_file('ALL.txt', alive_nodes)
     encode_to_base64_file('US.txt', us_nodes)
     encode_to_base64_file('AI.txt', ai_nodes)
     encode_to_base64_file('OTHER.txt', other_nodes)
     
-    # 5. 转换并生成 ACL4SSR 精简版配置文件 (带有 C 后缀)
-    print("\n[格式转换] 正在请求 API 转换为 ACL4SSR 精简版 (Clash YAML)...")
+    # 5. 本地拼装生成 Clash (C 后缀) 文件
+    print("\n[格式生成] 正在本地编写 Clash YAML 配置文件...")
     
-    # 映射任务：(目标 C 文件名 : 对应的原 Base64 文件名)
     acl_tasks = {
         'ALLC.txt': 'ALL.txt',
         'USC.txt': 'US.txt',
@@ -422,21 +460,18 @@ def main():
         'SUSC.txt': 'SUS.txt'
     }
     
-    # 串行/小并发转换，避免请求过于频繁
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(convert_to_acl_mini, target, source) for target, source in acl_tasks.items()]
-        for future in as_completed(futures):
-            future.result()
+    for target, source in acl_tasks.items():
+        generate_clash_yaml_locally(target, source)
 
     print("\n" + "="*40)
     print(" 任务执行完成！订阅导出汇总：")
-    print(f" [公共精选] ALL.txt:   {len(alive_nodes)} 个 | ACL精简: ALLC.txt")
-    print(f" [公共美国] US.txt:    {len(us_nodes)} 个 | ACL精简: USC.txt")
-    print(f" [公共 AI ] AI.txt:    {len(ai_nodes)} 个 | ACL精简: AIC.txt")
-    print(f" [公共其他] OTHER.txt: {len(other_nodes)} 个 | ACL精简: OTHERC.txt")
+    print(f" [公共精选] ALL.txt:   {len(alive_nodes)} 个 | Clash 订阅: ALLC.txt")
+    print(f" [公共美国] US.txt:    {len(us_nodes)} 个 | Clash 订阅: USC.txt")
+    print(f" [公共 AI ] AI.txt:    {len(ai_nodes)} 个 | Clash 订阅: AIC.txt")
+    print(f" [公共其他] OTHER.txt: {len(other_nodes)} 个 | Clash 订阅: OTHERC.txt")
     print("----------------------------------------")
-    print(f" [专属原样] SALL.txt  | ACL精简: SALLC.txt")
-    print(f" [专属美国] SUS.txt   | ACL精简: SUSC.txt")
+    print(f" [专属原样] SALL.txt  | Clash 订阅: SALLC.txt")
+    print(f" [专属美国] SUS.txt   | Clash 订阅: SUSC.txt")
     print("========================================")
 
 if __name__ == "__main__":
