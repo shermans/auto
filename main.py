@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import socket
+import ssl
 import urllib.parse
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
@@ -21,13 +22,18 @@ PROXIES = {
     "https": "http://127.0.0.1:10808"
 } if USE_PROXY else None
 
+# 支持的代理协议头（v2rayN 识别标准）
 PROTOCOLS = (
     "vmess://", "vless://", "ss://", "ssr://", "trojan://",
     "hysteria://", "hysteria2://", "hy2://", "tuic://",
     "juicity://", "wireguard://", "wg://", "socks://", "socks5://", "http://"
 )
 
+# 纯 UDP 传输协议头列表（免 TCP 测活硬过滤，防止误杀）
+UDP_PROTOCOLS = ("hysteria://", "hysteria2://", "hy2://", "tuic://", "juicity://", "wireguard://", "wg://")
+
 def v2rayn_smart_parse(raw_content):
+    """参照 v2rayN 订阅解析逻辑"""
     if not raw_content:
         return []
 
@@ -46,6 +52,7 @@ def v2rayn_smart_parse(raw_content):
     return []
 
 def v2rayn_base64_decode(s):
+    """v2rayN 级别的 Base64 宽松解码器"""
     s = "".join(s.split())
     if not s:
         return ""
@@ -62,6 +69,7 @@ def v2rayn_base64_decode(s):
         return ""
 
 def extract_nodes_from_lines(text):
+    """按行提取以标准协议开头的节点"""
     nodes = []
     for line in text.splitlines():
         line = line.strip()
@@ -121,31 +129,33 @@ def fetch_single_url(url, headers):
         resp = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         if resp.status_code == 200:
             nodes = v2rayn_smart_parse(resp.text)
-            print(f"    -> [{url}] 抓取成功 | 提取节点: {len(nodes)} 个")
+            print(f"    -> [{url}] 抓取成功，提取节点: {len(nodes)} 个")
             return url, nodes
         else:
-            print(f"    -> [{url}] 抓取失败 | HTTP状态码: {resp.status_code}")
+            print(f"    -> [{url}] 抓取失败，HTTP 状态码: {resp.status_code}")
     except Exception as e:
-        print(f"    -> [{url}] 请求异常 | {e}")
+        print(f"    -> [{url}] 请求异常: {e}")
     return url, []
 
 def fetch_links_batch(link_list):
     if not link_list:
         return [], {}
 
-    headers = {'User-Agent': 'v2rayN/6.23'}
-    all_nodes = []
-    url_details = {} # 用于保存 URL -> 节点数量的对应关系
+    headers = {
+        'User-Agent': 'v2rayN/6.23'
+    }
     
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    all_nodes = []
+    link_details = {}
+    with ThreadPoolExecutor(max_workers=30) as executor:
         future_to_url = {executor.submit(fetch_single_url, url, headers): url for url in link_list}
         for future in as_completed(future_to_url):
             url, nodes = future.result()
-            url_details[url] = len(nodes)
+            link_details[url] = len(nodes)
             if nodes:
                 all_nodes.extend(nodes)
 
-    return all_nodes, url_details
+    return all_nodes, link_details
 
 def extract_node_host(node_str):
     try:
@@ -219,10 +229,21 @@ def is_ai_friendly_node(node_str):
     ai_countries = {'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
     return code in ai_countries
 
-def test_tcping(node_str):
+def test_node_health(node_str):
+    """
+    改进版节点检测：
+    1. UDP 协议节点直接判定放行，防止误杀
+    2. TCP 端口连通性检测
+    3. 常见 SSL 端口追加 TLS 握手，过滤假死 CDN 节点
+    """
+    node_lower = node_str.lower()
+    # 纯 UDP 协议直接放行，由客户端连接时自行测试
+    if any(node_lower.startswith(proto) for proto in UDP_PROTOCOLS):
+        return True
+
     try:
         host, port = None, None
-        if node_str.lower().startswith('vmess://'):
+        if node_lower.startswith('vmess://'):
             decoded_json_str = v2rayn_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
             if decoded_json_str:
                 node_data = json.loads(decoded_json_str)
@@ -237,12 +258,33 @@ def test_tcping(node_str):
                 host, port = parts[0].strip('[]'), int(parts[1])
             else:
                 host, port = netloc.strip('[]'), 443
-        if not host or not port: return False
+
+        if not host or not port:
+            return False
+
+        # 1. 基础 TCP 握手
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.5)
+        s.settimeout(2.0)
         result = s.connect_ex((host, port))
-        s.close()
-        return result == 0
+        if result != 0:
+            s.close()
+            return False
+
+        # 2. 常见 HTTPS 加密端口追加 TLS 握手测试（过滤假死节点）
+        if port in [443, 8443, 2053, 2083, 2096]:
+            try:
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                tls_sock = context.wrap_socket(s, server_hostname=host)
+                tls_sock.close()
+            except Exception:
+                s.close()
+                return False
+        else:
+            s.close()
+
+        return True
     except Exception:
         return False
 
@@ -252,37 +294,37 @@ def main():
     print(f" 开始抓取 | 代理状态: {proxy_status}")
     print("========================================")
     
-    # 1. 处理 links.txt
+    # 1. 处理 links.txt（抓取、去重重命名、测活）
     t_links, gh_links, chat_links = parse_links_file()
-    all_links_1 = t_links + gh_links + chat_links
-    raw_nodes_1, details_1 = fetch_links_batch(all_links_1)
+    raw_nodes_1, details_1 = fetch_links_batch(t_links + gh_links + chat_links)
     print(f"\n[抓取统计] links.txt 提取原始节点总数: {len(raw_nodes_1)} 个")
     
     alive_nodes_1 = []
     if raw_nodes_1:
+        # 先去重并重命名
         nodes_1 = list(set([rename_node(n) for n in raw_nodes_1]))
-        with ThreadPoolExecutor(max_workers=200) as executor:
-            future_map = {executor.submit(test_tcping, n): n for n in nodes_1}
+        # 针对 GitHub Actions 的稳定并发设置 (max_workers=80)
+        with ThreadPoolExecutor(max_workers=80) as executor:
+            future_map = {executor.submit(test_node_health, n): n for n in nodes_1}
             for future in as_completed(future_map):
                 if future.result():
                     alive_nodes_1.append(future_map[future])
 
-    # 2. 处理 self.txt
+    # 2. 处理 self.txt（直接抓取 + API转换抓取，保留原样）
     ps_tasks = parse_pslinks_file()
-    alive_nodes_2, details_2 = fetch_links_batch(ps_tasks)
+    alive_nodes_2 = []
+    details_2 = {}
     if ps_tasks:
+        alive_nodes_2, details_2 = fetch_links_batch(ps_tasks)
         print(f"[抓取统计] self.txt 提取节点总数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并抓取明细并写入 fetch_details.txt
+    # 3. 输出链接抓取节点数到 linksdetails.txt
     all_details = {**details_1, **details_2}
-    
-    with open('fetch_details.txt', 'w', encoding='utf-8') as f:
-        f.write("========== 订阅链接节点抓取明细列表 ==========\n")
-        f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        
+    with open('linksdetails.txt', 'w', encoding='utf-8') as f:
+        f.write("========== 链接抓取节点数统计 ==========\n")
         for url, count in all_details.items():
-            line = f"链接: {url}\n抓取节点数量: {count} 个\n" + "-"*50 + "\n"
-            f.write(line)
+            f.write(f"链接: {url}\n抓取节点数: {count} 个\n" + "-"*40 + "\n")
+    print(f"[提示] 抓取明细已导出至 linksdetails.txt，共记录 {len(all_details)} 条链接。")
 
     # 4. 合并与去重导出
     alive_nodes = list(set(alive_nodes_1 + alive_nodes_2))
@@ -302,7 +344,6 @@ def main():
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
-    print(f" - 抓取明细已导出至文件:            fetch_details.txt")
     print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
     print(f" - 其中美国专属节点        (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
