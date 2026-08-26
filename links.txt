@@ -1,9 +1,9 @@
 [t.me]
 # Telegram 频道公开网页源,支持节点和订阅
-# https://t.me/s/filtershekanpro
+https://t.me/s/filtershekanpro
 https://t.me/s/freevpnjd
 https://t.me/s/dingyue_center
-# https://t.me/s/vpnfail_v2ray
+https://t.me/s/vpnfail_v2ray
 https://t.me/s/SSRSUB
 https://t.me/s/QiangLieTuiJian
 https://t.me/vpnfail_v2ray
