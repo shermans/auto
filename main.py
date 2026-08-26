@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ==================== 用户自定义配置区 ====================
 PROXY_SWITCH = 'N'    
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
+# ACL4SSR 精简版转换 API (目标格式: Clash)
+ACL_MINI_CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=clash&config=https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Mini.ini&url="
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
@@ -80,6 +82,37 @@ def encode_to_base64_file(filename, node_list):
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(encoded)
 
+def convert_to_acl_mini(filename, node_list):
+    """将节点列表通过 API 转换为 ACL4SSR 精简版 Clash 配置并写入文件"""
+    if not node_list:
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("# 没有可用节点\n")
+        return
+
+    # 1. 节点合并并做 Base64 编码，构造 data:text/plain;base64 虚拟链接
+    raw_content = "\n".join(node_list)
+    b64_content = base64.b64encode(raw_content.encode('utf-8')).decode('utf-8')
+    data_url = f"data:text/plain;base64,{b64_content}"
+
+    # 2. 拼接 Subconverter API 地址
+    req_url = ACL_MINI_CONVERT_API + urllib.parse.quote(data_url, safe='')
+
+    # 3. 请求 API 获取转换后的 YAML 配置文件内容
+    try:
+        resp = requests.get(req_url, timeout=25, proxies=PROXIES)
+        if resp.status_code == 200 and resp.text:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(resp.text)
+            print(f"    -> [{filename}] 转换 ACL4SSR 精简版成功！")
+        else:
+            print(f"    -> [{filename}] 转换失败，HTTP 状态码: {resp.status_code}")
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("# ACL4SSR 转换接口返回错误\n")
+    except Exception as e:
+        print(f"    -> [{filename}] 请求转换接口异常: {e}")
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(f"# 转换异常: {e}\n")
+
 def extract_node_info(node_str):
     node_lower = node_str.lower()
     host, port = None, None
@@ -143,13 +176,13 @@ def fetch_links_batch(link_list):
 # ==================== 专属通道：self.txt 处理 (不测速/不改名/不去重) ====================
 
 def process_self_nodes():
-    """独立处理 self.txt 链接，生成 SALL.txt 和 SUS.txt"""
+    """独立处理 self.txt 链接，生成 SALL.txt、SUS.txt 以及 ACL 格式文件"""
     ps_path = 'self.txt'
     if not os.path.exists(ps_path):
         print(f"\n[提示] 未在同路径下找到 {ps_path} 文件，跳过专属通道。")
         encode_to_base64_file('SALL.txt', [])
         encode_to_base64_file('SUS.txt', [])
-        return {}
+        return [], [], {}
 
     ps_tasks = []
     with open(ps_path, 'r', encoding='utf-8') as f:
@@ -177,7 +210,7 @@ def process_self_nodes():
     encode_to_base64_file('SUS.txt', raw_sus_nodes)
     
     print(f"[专属通道完成] SALL.txt (原样导出): {len(raw_sall_nodes)} 个 | SUS.txt (美国筛选): {len(raw_sus_nodes)} 个")
-    return self_details
+    return raw_sall_nodes, raw_sus_nodes, self_details
 
 # ==================== 公共通道：三轮测活/重命名/去重 ====================
 
@@ -310,7 +343,7 @@ def main():
     print("========================================")
     
     # 1. 处理专属通道 self.txt (独立、不测速、不去重、不改名)
-    self_details = process_self_nodes()
+    sall_nodes, sus_nodes, self_details = process_self_nodes()
 
     # 2. 处理公共通道 links.txt (三轮严苛测活、更名、去重)
     t_links, gh_links, chat_links = parse_links_file()
@@ -350,25 +383,42 @@ def main():
         for url, count in all_details.items():
             f.write(f"链接: {url}\n抓取节点数: {count} 个\n" + "-"*40 + "\n")
 
-    # 4. 导出公共分类订阅文件 (Base64)
+    # 4. 导出公共分类节点列表
     us_nodes = [n for n in alive_nodes if get_country_code(n) == 'US']
     ai_nodes = [n for n in alive_nodes if get_country_code(n) in {'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}]
     other_nodes = [n for n in alive_nodes if get_country_code(n) not in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}]
             
+    # 生成基础 Base64 记事本
     encode_to_base64_file('ALL.txt', alive_nodes)
     encode_to_base64_file('US.txt', us_nodes)
     encode_to_base64_file('AI.txt', ai_nodes)
     encode_to_base64_file('OTHER.txt', other_nodes)
     
+    # 5. 转换并生成 ACL4SSR 精简版配置文件 (带有 C 后缀)
+    print("\n[格式转换] 正在请求 API 转换为 ACL4SSR 精简版 (Clash YAML)...")
+    acl_tasks = {
+        'ALLC.txt': alive_nodes,
+        'USC.txt': us_nodes,
+        'AIC.txt': ai_nodes,
+        'OTHERC.txt': other_nodes,
+        'SALLC.txt': sall_nodes,
+        'SUSC.txt': sus_nodes
+    }
+    
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [executor.submit(convert_to_acl_mini, fname, nodes) for fname, nodes in acl_tasks.items()]
+        for future in as_completed(futures):
+            future.result()
+
     print("\n" + "="*40)
     print(" 任务执行完成！订阅导出汇总：")
-    print(f" [公共精选] ALL.txt:   {len(alive_nodes)} 个")
-    print(f" [公共美国] US.txt:    {len(us_nodes)} 个")
-    print(f" [公共 AI ] AI.txt:    {len(ai_nodes)} 个")
-    print(f" [公共其他] OTHER.txt: {len(other_nodes)} 个")
+    print(f" [公共精选] ALL.txt:   {len(alive_nodes)} 个 | ACL精简: ALLC.txt")
+    print(f" [公共美国] US.txt:    {len(us_nodes)} 个 | ACL精简: USC.txt")
+    print(f" [公共 AI ] AI.txt:    {len(ai_nodes)} 个 | ACL精简: AIC.txt")
+    print(f" [公共其他] OTHER.txt: {len(other_nodes)} 个 | ACL精简: OTHERC.txt")
     print("----------------------------------------")
-    print(f" [专属原样] SALL.txt:  (已生成)")
-    print(f" [专属美国] SUS.txt:   (已生成)")
+    print(f" [专属原样] SALL.txt  | ACL精简: SALLC.txt")
+    print(f" [专属美国] SUS.txt   | ACL精简: SUSC.txt")
     print("========================================")
 
 if __name__ == "__main__":
