@@ -2,15 +2,13 @@ name: Auto Update Node Subscriptions
 
 on:
   schedule:
-    # 这里的 UTC 时间 0,4,8,12,16,20 对应北京时间(UTC+8)的 08:00, 12:00, 16:00, 20:00, 00:00, 04:00
+    # UTC 时间 0,4,8,12,16,20 对应北京时间(UTC+8) 08:00, 12:00, 16:00, 20:00, 00:00, 04:00
     - cron: '0 0,4,8,12,16,20 * * *'
   workflow_dispatch:
 
-# 全局环境变量：设置系统时区为北京时间
 env:
   TZ: Asia/Shanghai
 
-# 赋予工作流对仓库内容的读写权限
 permissions:
   contents: write
 
@@ -19,21 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    # 升级至 v5 版本消除 Node.js 20 警告
     - name: Checkout Repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
-    # 将 Runner 系统的时区强制设为北京时间
     - name: Set System Timezone to Asia/Shanghai
       run: |
         sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
         echo "Asia/Shanghai" | sudo tee /etc/timezone
 
+    # 升级至 v6 版本消除 Node.js 20 警告
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.10'
 
-    # 下载并准备 sing-box 二进制内核
     - name: Install sing-box Engine
       run: |
         curl -sL https://github.com/SagerNet/sing-box/releases/download/v1.8.11/sing-box-1.8.11-linux-amd64.tar.gz | tar -xz --strip-components=1
@@ -53,16 +51,15 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
-        # 将公共节点文件、专属节点文件以及统计文件全部加入 Git 暂存区
+        # 将生成的节点文件及统计明细添加至 Git 暂存区
         git add ALL.txt US.txt AI.txt OTHER.txt SALL.txt SUS.txt linksdetails.txt
         
-        # 检查是否有文件更新
+        # 安全检查：如果无任何文件改动，正常退出（exit 0）不抛出错误
         if git diff --staged --quiet; then
-          echo "没有检测到任何节点文件有更新，跳过提交。"
+          echo "没有任何文件发生变动，安全跳过提交。"
           exit 0
         fi
         
-        # 产生包含北京时间的 Commit 并推送
         NOW=$(date '+%Y-%m-%d %H:%M:%S')
         git commit -m "Auto-update nodes: ${NOW}"
         git push
