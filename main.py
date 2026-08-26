@@ -82,35 +82,50 @@ def encode_to_base64_file(filename, node_list):
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(encoded)
 
-def convert_to_acl_mini(filename, node_list):
-    """将节点列表通过 API 转换为 ACL4SSR 精简版 Clash 配置并写入文件"""
-    if not node_list:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write("# 没有可用节点\n")
-        return
+def convert_to_acl_mini(target_filename, source_filename):
+    """
+    通过 GitHub Raw 链接地址向 Subconverter 请求转换，规避 URL 超长导致的 API 错误
+    """
+    # 1. 获取 GitHub Actions 环境变量
+    repo_slug = os.getenv('GITHUB_REPOSITORY', '')  # 格式: username/repo
+    ref_name = os.getenv('GITHUB_REF_NAME', 'main') # 默认分支 main
+    
+    if not repo_slug:
+        # 本地运行降级处理：采用 Data URL
+        try:
+            if not os.path.exists(source_filename):
+                return
+            with open(source_filename, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if not content:
+                with open(target_filename, 'w', encoding='utf-8') as f:
+                    f.write("# 没有可用节点\n")
+                return
+            raw_url = f"data:text/plain;base64,{content}"
+        except Exception as e:
+            print(f"    -> [{target_filename}] 本地读取源文件失败: {e}")
+            return
+    else:
+        # 在 GitHub Actions 中：通过 GitHub Raw 访问刚生成的原始文本
+        raw_url = f"https://raw.githubusercontent.com/{repo_slug}/{ref_name}/{source_filename}"
 
-    # 1. 节点合并并做 Base64 编码，构造 data:text/plain;base64 虚拟链接
-    raw_content = "\n".join(node_list)
-    b64_content = base64.b64encode(raw_content.encode('utf-8')).decode('utf-8')
-    data_url = f"data:text/plain;base64,{b64_content}"
+    # 2. 构造 Subconverter API 请求
+    req_url = ACL_MINI_CONVERT_API + urllib.parse.quote(raw_url, safe='')
 
-    # 2. 拼接 Subconverter API 地址
-    req_url = ACL_MINI_CONVERT_API + urllib.parse.quote(data_url, safe='')
-
-    # 3. 请求 API 获取转换后的 YAML 配置文件内容
     try:
-        resp = requests.get(req_url, timeout=25, proxies=PROXIES)
-        if resp.status_code == 200 and resp.text:
-            with open(filename, 'w', encoding='utf-8') as f:
+        resp = requests.get(req_url, timeout=30, proxies=PROXIES)
+        # 简单校验返回内容是否包含 Clash 配置核心关键字
+        if resp.status_code == 200 and ("proxies:" in resp.text or "proxy-groups:" in resp.text):
+            with open(target_filename, 'w', encoding='utf-8') as f:
                 f.write(resp.text)
-            print(f"    -> [{filename}] 转换 ACL4SSR 精简版成功！")
+            print(f"    -> [{target_filename}] 转换 ACL4SSR 精简版成功！")
         else:
-            print(f"    -> [{filename}] 转换失败，HTTP 状态码: {resp.status_code}")
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write("# ACL4SSR 转换接口返回错误\n")
+            print(f"    -> [{target_filename}] 转换失败，HTTP 状态码: {resp.status_code}")
+            with open(target_filename, 'w', encoding='utf-8') as f:
+                f.write(f"# ACL4SSR 转换接口返回错误 (HTTP {resp.status_code})\n")
     except Exception as e:
-        print(f"    -> [{filename}] 请求转换接口异常: {e}")
-        with open(filename, 'w', encoding='utf-8') as f:
+        print(f"    -> [{target_filename}] 请求转换接口异常: {e}")
+        with open(target_filename, 'w', encoding='utf-8') as f:
             f.write(f"# 转换异常: {e}\n")
 
 def extract_node_info(node_str):
@@ -176,7 +191,7 @@ def fetch_links_batch(link_list):
 # ==================== 专属通道：self.txt 处理 (不测速/不改名/不去重) ====================
 
 def process_self_nodes():
-    """独立处理 self.txt 链接，生成 SALL.txt、SUS.txt 以及 ACL 格式文件"""
+    """独立处理 self.txt 链接，生成 SALL.txt 和 SUS.txt"""
     ps_path = 'self.txt'
     if not os.path.exists(ps_path):
         print(f"\n[提示] 未在同路径下找到 {ps_path} 文件，跳过专属通道。")
@@ -396,17 +411,20 @@ def main():
     
     # 5. 转换并生成 ACL4SSR 精简版配置文件 (带有 C 后缀)
     print("\n[格式转换] 正在请求 API 转换为 ACL4SSR 精简版 (Clash YAML)...")
+    
+    # 映射任务：(目标 C 文件名 : 对应的原 Base64 文件名)
     acl_tasks = {
-        'ALLC.txt': alive_nodes,
-        'USC.txt': us_nodes,
-        'AIC.txt': ai_nodes,
-        'OTHERC.txt': other_nodes,
-        'SALLC.txt': sall_nodes,
-        'SUSC.txt': sus_nodes
+        'ALLC.txt': 'ALL.txt',
+        'USC.txt': 'US.txt',
+        'AIC.txt': 'AI.txt',
+        'OTHERC.txt': 'OTHER.txt',
+        'SALLC.txt': 'SALL.txt',
+        'SUSC.txt': 'SUS.txt'
     }
     
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = [executor.submit(convert_to_acl_mini, fname, nodes) for fname, nodes in acl_tasks.items()]
+    # 串行/小并发转换，避免请求过于频繁
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(convert_to_acl_mini, target, source) for target, source in acl_tasks.items()]
         for future in as_completed(futures):
             future.result()
 
