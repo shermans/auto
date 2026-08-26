@@ -1,6 +1,6 @@
 # ==========================================
 # 本地自动生成的 Clash 配置文件 (ACL4SSR 精简版)
-# 更新时间: 2026-08-27 00:47:06
+# 更新时间: 2026-08-27 06:42:15
 # ==========================================
 port: 7890
 socks-port: 7891
@@ -16,10 +16,6 @@ proxy-groups:
     proxies:
       - ♻️ 自动选择
       - DIRECT
-      - "美国高速 03| CTCM"
-      - "美国高速 04| BGP"
-      - "美国高速 03| CTCM"
-      - "美国高速 04| BGP"
       - "US-26-10-129.146.38.3"
       - "US-26-10-151.101.56.7"
       - "US-26-10-180.178.60.254"
@@ -40,6 +36,10 @@ proxy-groups:
       - "US-26-10-node1.nebulacurse.space"
       - "US-26-10-node1.nebulacurse.space"
       - "US-26-10-node1.nebulacurse.space"
+      - "美国高速 03| CTCM"
+      - "美国高速 04| BGP"
+      - "美国高速 03| CTCM"
+      - "美国高速 04| BGP"
       - "剩余流量：50 GB"
       - "距离下次重置剩余：4 天"
       - "套餐到期：2026-08-31"
@@ -54,10 +54,6 @@ proxy-groups:
     interval: 300
     tolerance: 50
     proxies:
-      - "美国高速 03| CTCM"
-      - "美国高速 04| BGP"
-      - "美国高速 03| CTCM"
-      - "美国高速 04| BGP"
       - "US-26-10-129.146.38.3"
       - "US-26-10-151.101.56.7"
       - "US-26-10-180.178.60.254"
@@ -78,6 +74,10 @@ proxy-groups:
       - "US-26-10-node1.nebulacurse.space"
       - "US-26-10-node1.nebulacurse.space"
       - "US-26-10-node1.nebulacurse.space"
+      - "美国高速 03| CTCM"
+      - "美国高速 04| BGP"
+      - "美国高速 03| CTCM"
+      - "美国高速 04| BGP"
       - "剩余流量：50 GB"
       - "距离下次重置剩余：4 天"
       - "套餐到期：2026-08-31"
@@ -94,10 +94,6 @@ proxy-groups:
 
 # ----------------- 节点定义 -----------------
 proxies:
-  - vless://5e2753b1-46d5-4266-9acc-589d29d6cfe3@cfyes.ziyoufly.xyz:443?type=ws&encryption=none&host=cf-uh-us01.23523463.xyz&path=%2Fziyou&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=cf-uh-us01.23523463.xyz#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2003%7C%20CTCM
-  - vless://5e2753b1-46d5-4266-9acc-589d29d6cfe3@uh-us01.ziyoufly.xyz:55555?type=tcp&encryption=none&host=&path=&headerType=none&quicSecurity=none&serviceName=&security=reality&flow=xtls-rprx-vision&fp=chrome&insecure=0&sni=download-porter.hoyoverse.com&pbk=1XQ60qYOfBZJpcilNV9Fu7OSpuO5_6-zrNZIYhB_YU4&sid=af317506#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2004%7C%20BGP
-  - vless://0427c758-f9fd-43c0-9e92-9ddbd1f359bd@cfyes.ziyoufly.xyz:443?type=ws&encryption=none&host=cf-uh-us01.23523463.xyz&path=%2Fziyou&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=cf-uh-us01.23523463.xyz#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2003%7C%20CTCM
-  - vless://0427c758-f9fd-43c0-9e92-9ddbd1f359bd@uh-us01.ziyoufly.xyz:55555?type=tcp&encryption=none&host=&path=&headerType=none&quicSecurity=none&serviceName=&security=reality&flow=xtls-rprx-vision&fp=chrome&insecure=0&sni=download-porter.hoyoverse.com&pbk=1XQ60qYOfBZJpcilNV9Fu7OSpuO5_6-zrNZIYhB_YU4&sid=af317506#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2004%7C%20BGP
   - ss://MjAyMi1ibGFrZTMtY2hhY2hhMjAtcG9seTEzMDU6N0Q5LzNZNStNQ2VCRE5wQzZmdFJEbGtBSmRLcFhDYzFtT0U5NFN2Y1hFYz0@129.146.38.3:50356#US-26-10-129.146.38.3
   - vless://da6ece67-aff5-4f94-94f3-08e87ca8cd51@151.101.56.7:443?encryption=none&security=tls&sni=ssl.fastly.com&type=ws&host=7wwwspeedtestnet.global.ssl.fastly.net&path=%2F#US-26-10-151.101.56.7
   - vless://caec0d8d-ab2f-4247-b97d-7fb1a34ab195@180.178.60.254:10000?encryption=none&security=none&type=tcp&headerType=none#US-26-10-180.178.60.254
@@ -118,6 +114,10 @@ proxies:
   - vless://073758f2-9669-0001-9541-b8656bde49a2@node1.nebulacurse.space:443?encryption=none&security=reality&sni=node1.nebulacurse.space&fp=chrome&pbk=wGPdcHBZQD0Qhlf32ZKRRiUSbk_ndjcDnQxSG84X4HA&sid=ea57b80afd90326b&type=grpc#US-26-10-node1.nebulacurse.space
   - vless://073758f2-9669-0001-9541-b8656bde49a2@node1.nebulacurse.space:443?encryption=none&security=reality&sni=node1.nebulacurse.space&fp=firefox&pbk=wGPdcHBZQD0Qhlf32ZKRRiUSbk_ndjcDnQxSG84X4HA&sid=ea57b80afd90326b&type=grpc#US-26-10-node1.nebulacurse.space
   - vless://073758f2-9669-0001-9541-b8656bde49a2@node1.nebulacurse.space:443?encryption=none&security=reality&sni=node1.nebulacurse.space&fp=firefox&pbk=wGPdcHBZQD0Qhlf32ZKRRiUSbk_ndjcDnQxSG84X4HA&sid=ea57b80afd90326b&type=grpc#US-26-10-node1.nebulacurse.space
+  - vless://0427c758-f9fd-43c0-9e92-9ddbd1f359bd@cfyes.ziyoufly.xyz:443?type=ws&encryption=none&host=cf-uh-us01.23523463.xyz&path=%2Fziyou&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=cf-uh-us01.23523463.xyz#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2003%7C%20CTCM
+  - vless://0427c758-f9fd-43c0-9e92-9ddbd1f359bd@uh-us01.ziyoufly.xyz:55555?type=tcp&encryption=none&host=&path=&headerType=none&quicSecurity=none&serviceName=&security=reality&flow=xtls-rprx-vision&fp=chrome&insecure=0&sni=download-porter.hoyoverse.com&pbk=1XQ60qYOfBZJpcilNV9Fu7OSpuO5_6-zrNZIYhB_YU4&sid=af317506#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2004%7C%20BGP
+  - vless://5e2753b1-46d5-4266-9acc-589d29d6cfe3@cfyes.ziyoufly.xyz:443?type=ws&encryption=none&host=cf-uh-us01.23523463.xyz&path=%2Fziyou&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=cf-uh-us01.23523463.xyz#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2003%7C%20CTCM
+  - vless://5e2753b1-46d5-4266-9acc-589d29d6cfe3@uh-us01.ziyoufly.xyz:55555?type=tcp&encryption=none&host=&path=&headerType=none&quicSecurity=none&serviceName=&security=reality&flow=xtls-rprx-vision&fp=chrome&insecure=0&sni=download-porter.hoyoverse.com&pbk=1XQ60qYOfBZJpcilNV9Fu7OSpuO5_6-zrNZIYhB_YU4&sid=af317506#%E7%BE%8E%E5%9B%BD%E9%AB%98%E9%80%9F%2004%7C%20BGP
   - vless://b50f3a9a-e41b-4d1e-b5f9-6ec8d4795332@cf-no.nekohub.xyz:2053?type=ws&encryption=none&host=ccsus11-cdn.nekohub.xyz&path=%2Fvless_ws%3Fed%3D4096&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=ccsus11-cdn-cdn.nekohub.xyz&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdoh.pub%2Fdns-query#%E5%89%A9%E4%BD%99%E6%B5%81%E9%87%8F%EF%BC%9A50%20GB
   - vless://b50f3a9a-e41b-4d1e-b5f9-6ec8d4795332@cf-no.nekohub.xyz:2053?type=ws&encryption=none&host=ccsus11-cdn.nekohub.xyz&path=%2Fvless_ws%3Fed%3D4096&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=ccsus11-cdn-cdn.nekohub.xyz&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdoh.pub%2Fdns-query#%E8%B7%9D%E7%A6%BB%E4%B8%8B%E6%AC%A1%E9%87%8D%E7%BD%AE%E5%89%A9%E4%BD%99%EF%BC%9A4%20%E5%A4%A9
   - vless://b50f3a9a-e41b-4d1e-b5f9-6ec8d4795332@cf-no.nekohub.xyz:2053?type=ws&encryption=none&host=ccsus11-cdn.nekohub.xyz&path=%2Fvless_ws%3Fed%3D4096&headerType=none&quicSecurity=none&serviceName=&security=tls&fp=chrome&insecure=0&sni=ccsus11-cdn-cdn.nekohub.xyz&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdoh.pub%2Fdns-query#%E5%A5%97%E9%A4%90%E5%88%B0%E6%9C%9F%EF%BC%9A2026-08-31
