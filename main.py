@@ -10,9 +10,9 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
-PROXY_SWITCH = 'N'   
+PROXY_SWITCH = 'N'    
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
-DAYS_LIMIT = 7   
+DAYS_LIMIT = 7    
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
@@ -21,7 +21,6 @@ PROXIES = {
     "https": "http://127.0.0.1:10808"
 } if USE_PROXY else None
 
-# 支持的代理协议头（v2rayN 识别标准）
 PROTOCOLS = (
     "vmess://", "vless://", "ss://", "ssr://", "trojan://",
     "hysteria://", "hysteria2://", "hy2://", "tuic://",
@@ -29,23 +28,15 @@ PROTOCOLS = (
 )
 
 def v2rayn_smart_parse(raw_content):
-    """
-    完全参照 v2rayN 的订阅解析逻辑:
-    1. 尝试直接按行寻找节点
-    2. 若找到则返回；若没找到，尝试 Base64 强行容错解码后再找
-    """
     if not raw_content:
         return []
 
-    # 剔除 UTF-8 BOM 头与前后空格
     content = raw_content.lstrip('\ufeff').strip()
     
-    # --- 第一步：直接提取（针对未Base64编码的明文订阅/节点列表）---
     nodes = extract_nodes_from_lines(content)
     if nodes:
         return nodes
 
-    # --- 第二步：Base64 容错解码（针对Base64编码的订阅）---
     decoded_text = v2rayn_base64_decode(content)
     if decoded_text:
         nodes = extract_nodes_from_lines(decoded_text)
@@ -55,40 +46,30 @@ def v2rayn_smart_parse(raw_content):
     return []
 
 def v2rayn_base64_decode(s):
-    """v2rayN 级别的 Base64 宽松解码器"""
-    # 清理非 Base64 字符（换行、空格等）
     s = "".join(s.split())
     if not s:
         return ""
     
-    # 替换 URL Safe 字符
     s = s.replace('-', '+').replace('_', '/')
-    
-    # 自动补全 Padding '='
     padding = len(s) % 4
     if padding:
         s += '=' * (4 - padding)
         
     try:
         decoded_bytes = base64.b64decode(s)
-        # 容错解码：用 utf-8 解码，遇到非法字符直接忽略 (errors='ignore')，绝不抛出异常！
         return decoded_bytes.decode('utf-8', errors='ignore')
     except Exception:
         return ""
 
 def extract_nodes_from_lines(text):
-    """按行提取以标准协议开头的节点"""
     nodes = []
     for line in text.splitlines():
         line = line.strip()
-        # 跳过空行和注释
         if not line or line.startswith('#') or line.startswith('//'):
             continue
             
-        # 匹配协议前缀
         line_lower = line.lower()
         if any(line_lower.startswith(proto) for proto in PROTOCOLS):
-            # 清理末尾可能夹带的符号
             clean_node = line.rstrip('.,;\r\n ')
             nodes.append(clean_node)
     return nodes
@@ -128,9 +109,7 @@ def parse_pslinks_file():
             if not line or line.startswith('#'):
                 continue
             if line.startswith('http://') or line.startswith('https://'):
-                # 1. 原始订阅链接
                 ps_tasks.append(line)
-                # 2. 转换后的订阅链接
                 converted_url = CONVERT_API + urllib.parse.quote(line, safe='')
                 ps_tasks.append(converted_url)
                 
@@ -141,33 +120,32 @@ def fetch_single_url(url, headers):
     try:
         resp = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
         if resp.status_code == 200:
-            # 采用 v2rayN 逻辑解析提取节点
             nodes = v2rayn_smart_parse(resp.text)
-            print(f"    -> [{url}] 抓取成功，提取节点: {len(nodes)} 个")
-            return nodes
+            print(f"    -> [{url}] 抓取成功 | 提取节点: {len(nodes)} 个")
+            return url, nodes
         else:
-            print(f"    -> [{url}] 抓取失败，HTTP 状态码: {resp.status_code}")
+            print(f"    -> [{url}] 抓取失败 | HTTP状态码: {resp.status_code}")
     except Exception as e:
-        print(f"    -> [{url}] 请求异常: {e}")
-    return []
+        print(f"    -> [{url}] 请求异常 | {e}")
+    return url, []
 
 def fetch_links_batch(link_list):
     if not link_list:
-        return []
+        return [], {}
 
-    headers = {
-        'User-Agent': 'v2rayN/6.23'  # 模拟 v2rayN 客户端 UA，防止被订阅服务器拦截
-    }
-    
+    headers = {'User-Agent': 'v2rayN/6.23'}
     all_nodes = []
+    url_details = {} # 用于保存 URL -> 节点数量的对应关系
+    
     with ThreadPoolExecutor(max_workers=50) as executor:
         future_to_url = {executor.submit(fetch_single_url, url, headers): url for url in link_list}
         for future in as_completed(future_to_url):
-            nodes = future.result()
+            url, nodes = future.result()
+            url_details[url] = len(nodes)
             if nodes:
                 all_nodes.extend(nodes)
 
-    return all_nodes
+    return all_nodes, url_details
 
 def extract_node_host(node_str):
     try:
@@ -274,9 +252,10 @@ def main():
     print(f" 开始抓取 | 代理状态: {proxy_status}")
     print("========================================")
     
-    # 1. 处理 links.txt（抓取、测活、去重、重命名）
+    # 1. 处理 links.txt
     t_links, gh_links, chat_links = parse_links_file()
-    raw_nodes_1 = fetch_links_batch(t_links + gh_links + chat_links)
+    all_links_1 = t_links + gh_links + chat_links
+    raw_nodes_1, details_1 = fetch_links_batch(all_links_1)
     print(f"\n[抓取统计] links.txt 提取原始节点总数: {len(raw_nodes_1)} 个")
     
     alive_nodes_1 = []
@@ -288,14 +267,24 @@ def main():
                 if future.result():
                     alive_nodes_1.append(future_map[future])
 
-    # 2. 处理 self.txt（直接抓取 + API转换抓取，保留原样）
+    # 2. 处理 self.txt
     ps_tasks = parse_pslinks_file()
-    alive_nodes_2 = []
+    alive_nodes_2, details_2 = fetch_links_batch(ps_tasks)
     if ps_tasks:
-        alive_nodes_2 = fetch_links_batch(ps_tasks)
         print(f"[抓取统计] self.txt 提取节点总数: {len(alive_nodes_2)} 个")
 
-    # 3. 合并与去重导出
+    # 3. 合并抓取明细并写入 fetch_details.txt
+    all_details = {**details_1, **details_2}
+    
+    with open('fetch_details.txt', 'w', encoding='utf-8') as f:
+        f.write("========== 订阅链接节点抓取明细列表 ==========\n")
+        f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        for url, count in all_details.items():
+            line = f"链接: {url}\n抓取节点数量: {count} 个\n" + "-"*50 + "\n"
+            f.write(line)
+
+    # 4. 合并与去重导出
     alive_nodes = list(set(alive_nodes_1 + alive_nodes_2))
     
     us_nodes = [n for n in alive_nodes if is_us_node(n)]
@@ -313,6 +302,7 @@ def main():
     
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
+    print(f" - 抓取明细已导出至文件:            fetch_details.txt")
     print(f" - 最终有效可用节点总数 (ALL.txt):    {len(alive_nodes)} 个")
     print(f" - 其中美国专属节点        (US.txt):    {len(us_nodes)} 个")
     print(f" - 其中 AI 友好节点        (AI.txt):    {len(ai_nodes)} 个")
