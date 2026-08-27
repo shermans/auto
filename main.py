@@ -79,109 +79,45 @@ def encode_to_base64_file(filename, node_list):
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(encoded)
 
-def generate_clash_yaml_locally(target_filename, source_filename):
+def generate_clash_yaml_via_api(target_filename, source_filename):
     """
-    【纯本地编写】拼接生成 ACL4SSR 精简风格的 Clash YAML 订阅文件
-    无需请求任何外部 API，零报错、速度极快
+    【通过 Subconverter API 转换】
+    读取本地生成的 Base64 文件，发送给在线/公共转码后端，
+    生成包含 ACL4SSR 规则、完美兼容 Clash 的配置文件。
     """
     if not os.path.exists(source_filename):
         return
 
     try:
         with open(source_filename, 'r', encoding='utf-8') as f:
-            encoded_content = f.read().strip()
-        if not encoded_content:
+            b64_content = f.read().strip()
+        if not b64_content:
+            with open(target_filename, 'w', encoding='utf-8') as f:
+                f.write("# 没有可用节点\n")
             return
-        node_text = v2rayn_base64_decode(encoded_content)
-        raw_nodes = extract_nodes_from_lines(node_text)
     except Exception as e:
-        print(f"    -> [{target_filename}] 本地读取源文件失败: {e}")
+        print(f"    -> [{target_filename}] 读取源 Base64 文件失败: {e}")
         return
 
-    if not raw_nodes:
-        with open(target_filename, 'w', encoding='utf-8') as f:
-            f.write("# 没有可用节点\n")
-        return
+    # 将 base64 数据进行 URL 编码后传入 api
+    sub_data = urllib.parse.quote(b64_content)
+    
+    # 使用稳定的开源 API 后端 (支持 data 参数直接传入文本)
+    api_url = f"https://api.v1.mk/sub?target=clash&url=data:text/plain;base64,{sub_data}&config=https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_NoAuto.ini"
 
-    # 提炼节点别名列表，用于策略组引用
-    proxy_names = []
-    for idx, node in enumerate(raw_nodes):
-        name = f"Node_{idx+1}"
-        if '#' in node:
-            try:
-                name = urllib.parse.unquote(node.split('#')[-1])
-            except Exception:
-                pass
-        proxy_names.append(name)
+    headers = {'User-Agent': 'ClashforWindows/0.20.39'}
 
-    # 1. 基础配置及全局参数
-    yaml_lines = [
-        "# ==========================================",
-        "# 本地自动生成的 Clash 配置文件 (ACL4SSR 精简版)",
-        f"# 更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "# ==========================================",
-        "port: 7890",
-        "socks-port: 7891",
-        "allow-lan: true",
-        "mode: rule",
-        "log-level: info",
-        "external-controller: 127.0.0.1:9090",
-        "",
-        "# ----------------- 策略组 -----------------",
-        "proxy-groups:",
-        "  - name: 🚀 节点选择",
-        "    type: select",
-        "    proxies:",
-        "      - ♻️ 自动选择",
-        "      - DIRECT"
-    ]
-
-    for name in proxy_names:
-        yaml_lines.append(f"      - \"{name}\"")
-
-    yaml_lines.extend([
-        "",
-        "  - name: ♻️ 自动选择",
-        "    type: url-test",
-        "    url: http://www.gstatic.com/generate_204",
-        "    interval: 300",
-        "    tolerance: 50",
-        "    proxies:"
-    ])
-
-    for name in proxy_names:
-        yaml_lines.append(f"      - \"{name}\"")
-
-    yaml_lines.extend([
-        "",
-        "  - name: 🐟 漏网之鱼",
-        "    type: select",
-        "    proxies:",
-        "      - 🚀 节点选择",
-        "      - DIRECT",
-        "",
-        "# ----------------- 节点定义 -----------------",
-        "proxies:"
-    ])
-
-    # 2. 插入节点 URI 链接或明文配置
-    for node in raw_nodes:
-        yaml_lines.append(f"  - {node}")
-
-    # 3. 基础 ACL4SSR 规则分流
-    yaml_lines.extend([
-        "",
-        "# ----------------- 分流规则 -----------------",
-        "rules:",
-        "  - GEOIP,LAN,DIRECT",
-        "  - GEOIP,CN,DIRECT",
-        "  - MATCH,🚀 节点选择"
-    ])
-
-    # 保存为本地文件
-    with open(target_filename, 'w', encoding='utf-8') as f:
-        f.write("\n".join(yaml_lines))
-    print(f"    -> [{target_filename}] 本地成功拼接并导出 Clash 配置！")
+    try:
+        # 在 GitHub Actions 中使用直连请求转换 API
+        resp = requests.get(api_url, headers=headers, timeout=30, proxies=PROXIES)
+        if resp.status_code == 200 and "proxies:" in resp.text:
+            with open(target_filename, 'w', encoding='utf-8') as f:
+                f.write(resp.text)
+            print(f"    -> [{target_filename}] 转换成功！已导出 Clash 配置文件。")
+        else:
+            print(f"    -> [{target_filename}] API 转换失败，HTTP 状态码: {resp.status_code}")
+    except Exception as e:
+        print(f"    -> [{target_filename}] 请求转换 API 异常: {e}")
 
 def extract_node_info(node_str):
     node_lower = node_str.lower()
@@ -448,8 +384,8 @@ def main():
     encode_to_base64_file('AI.txt', ai_nodes)
     encode_to_base64_file('OTHER.txt', other_nodes)
     
-    # 5. 本地拼装生成 Clash (C 后缀) 文件
-    print("\n[格式生成] 正在本地编写 Clash YAML 配置文件...")
+    # 5. 请求 Subconverter API 转化为 Clash (C 后缀) 文件
+    print("\n[格式生成] 正在通过 API 请求转换 Clash YAML 配置文件...")
     
     acl_tasks = {
         'ALLC.txt': 'ALL.txt',
@@ -461,7 +397,7 @@ def main():
     }
     
     for target, source in acl_tasks.items():
-        generate_clash_yaml_locally(target, source)
+        generate_clash_yaml_via_api(target, source)
 
     print("\n" + "="*40)
     print(" 任务执行完成！订阅导出汇总：")
