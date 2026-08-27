@@ -81,9 +81,9 @@ def encode_to_base64_file(filename, node_list):
 
 def generate_clash_yaml_via_api(target_filename, source_filename):
     """
-    【通过 Subconverter API 转换】
-    读取本地生成的 Base64 文件，发送给在线/公共转码后端，
-    生成包含 ACL4SSR 规则、完美兼容 Clash 的配置文件。
+    【通过 Subconverter POST API 转换】
+    直接读取本地刚刚生成的 Base64 文件内容，
+    以 POST 方式把请求体发送给后端，生成无错的 Clash YAML 配置。
     """
     if not os.path.exists(source_filename):
         return
@@ -96,28 +96,30 @@ def generate_clash_yaml_via_api(target_filename, source_filename):
                 f.write("# 没有可用节点\n")
             return
     except Exception as e:
-        print(f"    -> [{target_filename}] 读取源 Base64 文件失败: {e}")
+        print(f"    -> [{target_filename}] 读取源文件失败: {e}")
         return
 
-    # 将 base64 数据进行 URL 编码后传入 api
-    sub_data = urllib.parse.quote(b64_content)
+    # Subconverter 在线转换后端 API (搭载 ACL4SSR 规则)
+    api_url = "https://api.v1.mk/sub?target=clash&config=https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_NoAuto.ini"
     
-    # 使用稳定的开源 API 后端 (支持 data 参数直接传入文本)
-    api_url = f"https://api.v1.mk/sub?target=clash&url=data:text/plain;base64,{sub_data}&config=https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_NoAuto.ini"
-
-    headers = {'User-Agent': 'ClashforWindows/0.20.39'}
+    headers = {
+        'User-Agent': 'ClashforWindows/0.20.39',
+        'Content-Type': 'text/plain; charset=utf-8'
+    }
 
     try:
-        # 在 GitHub Actions 中使用直连请求转换 API
-        resp = requests.get(api_url, headers=headers, timeout=30, proxies=PROXIES)
-        if resp.status_code == 200 and "proxies:" in resp.text:
+        # 使用 POST 方式把整个 Base64 数据推送给后端 API
+        resp = requests.post(api_url, data=b64_content.encode('utf-8'), headers=headers, timeout=30, proxies=PROXIES)
+        
+        # 验证返回内容包含 Clash 必备的节点配置字段
+        if resp.status_code == 200 and ("proxies:" in resp.text or "proxy-groups:" in resp.text):
             with open(target_filename, 'w', encoding='utf-8') as f:
                 f.write(resp.text)
-            print(f"    -> [{target_filename}] 转换成功！已导出 Clash 配置文件。")
+            print(f"    -> [{target_filename}] API POST 转换成功！已写入标准 Clash 配置。")
         else:
             print(f"    -> [{target_filename}] API 转换失败，HTTP 状态码: {resp.status_code}")
     except Exception as e:
-        print(f"    -> [{target_filename}] 请求转换 API 异常: {e}")
+        print(f"    -> [{target_filename}] 请求 API 异常: {e}")
 
 def extract_node_info(node_str):
     node_lower = node_str.lower()
@@ -384,8 +386,8 @@ def main():
     encode_to_base64_file('AI.txt', ai_nodes)
     encode_to_base64_file('OTHER.txt', other_nodes)
     
-    # 5. 请求 Subconverter API 转化为 Clash (C 后缀) 文件
-    print("\n[格式生成] 正在通过 API 请求转换 Clash YAML 配置文件...")
+    # 5. 读取生成的 TXT 文件，发给 API 转换并导出 Clash (.txt 后缀)
+    print("\n[格式生成] 正在通过 Subconverter POST API 转换生成 Clash YAML 配置...")
     
     acl_tasks = {
         'ALLC.txt': 'ALL.txt',
