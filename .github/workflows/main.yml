@@ -52,7 +52,7 @@ jobs:
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
         # 将生成的节点文件（包含 Base64 版与 ACL 精简 Clash 版）及统计明细添加至 Git 暂存区
-        git add ALL.txt US.txt AI.txt OTHER.txt SALL.txt SUS.txt ALLC.txt USC.txt AIC.txt OTHERC.txt SALLC.txt SUSC.txt linksdetails.txt
+        git add ALL.txt US.txt AI.txt OTHER.txt SALL.txt SUS.txt linksdetails.txt
         
         # 安全检查：如果无任何文件改动，正常退出（exit 0）不抛出错误
         if git diff --staged --quiet; then
