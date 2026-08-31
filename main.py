@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
-PROXY_SWITCH = 'Y'  
+PROXY_SWITCH = 'N'  
 CONVERT_API = "https://edge-api-v1.ffqla.com/sub?target=mixed&url="
 DAYS_LIMIT = 7  
 # ========================================================
@@ -74,11 +74,10 @@ def parse_links_file():
     return t_me_links, github_links, chat_links
 
 def parse_pslinks_file():
-    """解析 self.txt：直接读取原始链接"""
     ps_path = 'self.txt'
     ps_tasks = []
     if not os.path.exists(ps_path):
-        print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过 self.txt 的解析。")
+        print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过 self.txt 解析。")
         return ps_tasks
 
     with open(ps_path, 'r', encoding='utf-8') as f:
@@ -309,13 +308,10 @@ def main():
     
     alive_nodes_links = []
     if raw_nodes_links:
-        # 先重命名
         renamed_nodes = [rename_node(n) for n in raw_nodes_links]
-        # 重命名后去重
         unique_renamed_nodes = list(set(renamed_nodes))
         print(f"[提示] 重命名后去重完成：由 {len(renamed_nodes)} 个节点去重为 {len(unique_renamed_nodes)} 个节点")
         
-        # 针对去重后的节点进行测活
         print(f"[提示] 开始对 links.txt 去重后的节点进行 TCP 测活...")
         with ThreadPoolExecutor(max_workers=200) as executor:
             for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in unique_renamed_nodes}):
@@ -324,15 +320,18 @@ def main():
                     alive_nodes_links.append(res_node)
         print(f"[统计] links.txt 测活完毕，存活节点数: {len(alive_nodes_links)} 个")
 
-    # 分类导出 links.txt 的存活节点
+    # 分类筛选出 US 节点、AI 节点、其他节点
+    us_nodes_links = [n for n in alive_nodes_links if get_country_code(n) == 'US']
     ai_nodes_links = [n for n in alive_nodes_links if is_ai_friendly_node(n)]
     other_nodes_links = [n for n in alive_nodes_links if not is_ai_friendly_node(n)]
     
+    # 导出 links.txt 生成的文件
     make_base64_file('ALL.txt', alive_nodes_links)
+    make_base64_file('US.txt', us_nodes_links)
     make_base64_file('AI.txt', ai_nodes_links)
     make_base64_file('OTHER.txt', other_nodes_links)
 
-    # ---------------- 2. 单独摘出 self.txt 处理 (后置抓取，不测活、不重命名、不删除) ----------------
+    # ---------------- 2. 单独摘出 self.txt 处理 (抓取 -> 不测活、不重命名、不删除) ----------------
     ps_tasks = parse_pslinks_file()
     self_nodes = []
     if ps_tasks:
@@ -340,7 +339,6 @@ def main():
         raw_self_nodes = extract_nodes_from_text(raw_self_text)
         print(f"[抓取统计] self.txt 来源原始节点总数: {len(raw_self_nodes)} 个")
         if raw_self_nodes:
-            # 仅做简单去重，保持原样节点（不重命名、不测活、不过滤）
             self_nodes = list(set(raw_self_nodes))
             print(f"[提示] self.txt 提取后直接采用节点数: {len(self_nodes)} 个")
 
@@ -356,6 +354,7 @@ def main():
     print(" 全部处理完成！最终结果统计：")
     print(" --- links.txt 部分 ---")
     print(f" - 有效可用节点总数 (ALL.txt):    {len(alive_nodes_links)} 个")
+    print(f" - 美国节点         (US.txt):     {len(us_nodes_links)} 个")
     print(f" - AI 友好节点       (AI.txt):     {len(ai_nodes_links)} 个")
     print(f" - 其他节点         (OTHER.txt):  {len(other_nodes_links)} 个")
     print(" --- self.txt 及合并部分 ---")
