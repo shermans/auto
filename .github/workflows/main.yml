@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 官方推荐最新稳定版 v4
     - name: Checkout Repository
       uses: actions/checkout@v4
 
@@ -26,7 +25,6 @@ jobs:
         sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
         echo "Asia/Shanghai" | sudo tee /etc/timezone
 
-    # 官方推荐最新稳定版 v5
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
@@ -51,8 +49,8 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
-        # 修正：删除了不存在的 US.txt，确保新增的 SUS.txt 和 SALL.txt 能被正常 Git 暂存
-        git add ALL.txt AI.txt US.txt OTHER.txt SUS.txt SALL.txt linksdetails.txt
+        # 包含了所有生成的 TXT 文件：ALL.txt, US.txt, AI.txt, OTHER.txt, SUS.txt, SALL.txt
+        git add ALL.txt US.txt AI.txt OTHER.txt SUS.txt SALL.txt linksdetails.txt
         
         # 安全检查：如果无任何文件改动，正常退出（exit 0）不抛出错误
         if git diff --staged --quiet; then
