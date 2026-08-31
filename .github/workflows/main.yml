@@ -17,18 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 升级至 v5 版本消除 Node.js 20 警告
+    # 官方推荐最新稳定版 v4
     - name: Checkout Repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4
 
     - name: Set System Timezone to Asia/Shanghai
       run: |
         sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
         echo "Asia/Shanghai" | sudo tee /etc/timezone
 
-    # 升级至 v6 版本消除 Node.js 20 警告
+    # 官方推荐最新稳定版 v5
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v5
       with:
         python-version: '3.10'
 
@@ -51,8 +51,8 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
-        # 将生成的节点文件（包含 Base64 版与 ACL 精简 Clash 版）及统计明细添加至 Git 暂存区
-        git add ALL.txt US.txt AI.txt OTHER.txt SALL.txt SUS.txt linksdetails.txt
+        # 修正：删除了不存在的 US.txt，确保新增的 SUS.txt 和 SALL.txt 能被正常 Git 暂存
+        git add ALL.txt AI.txt US.txt OTHER.txt SUS.txt SALL.txt linksdetails.txt
         
         # 安全检查：如果无任何文件改动，正常退出（exit 0）不抛出错误
         if git diff --staged --quiet; then
