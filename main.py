@@ -159,7 +159,7 @@ def fetch_single_url(url, headers):
 
 def fetch_links_batch(link_list):
     if not link_list:
-        return ""
+        return "", {}
 
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
@@ -168,6 +168,7 @@ def fetch_links_batch(link_list):
     all_raw_text = ""
     processed_urls = set()
     queue = list(link_list)
+    url_details = {}
 
     with ThreadPoolExecutor(max_workers=50) as executor:
         future_to_url = {}
@@ -185,15 +186,21 @@ def fetch_links_batch(link_list):
                 future_to_url[executor.submit(fetch_single_url, url, headers)] = url
                 
             for future in list(as_completed(future_to_url)):
+                url = future_to_url[future]
                 page_text, new_subs = future.result()
                 if page_text:
                     all_raw_text += page_text + "\n"
+                    node_count = len(extract_nodes_from_text(page_text))
+                    url_details[url] = node_count
+                else:
+                    url_details[url] = 0
+
                 for sub in new_subs:
                     if sub not in processed_urls and sub not in queue:
                         queue.append(sub)
                 future_to_url.pop(future, None)
 
-    return all_raw_text
+    return all_raw_text, url_details
 
 def extract_nodes_from_text(raw_text):
     nodes = []
@@ -303,9 +310,17 @@ def main():
     
     # ---------------- 1. 处理 links.txt (抓取 -> 重命名 -> 去重 -> TCP测活) ----------------
     t_links, gh_links, chat_links = parse_links_file()
-    raw_nodes_links = extract_nodes_from_text(fetch_links_batch(t_links + gh_links + chat_links))
+    links_batch_text, links_details = fetch_links_batch(t_links + gh_links + chat_links)
+    raw_nodes_links = extract_nodes_from_text(links_batch_text)
     print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_links)} 个")
     
+    # 输出每个链接的节点抓取情况到 linksdetails.txt
+    with open('linksdetails.txt', 'w', encoding='utf-8') as f:
+        f.write("========== links.txt 节点抓取明细 ==========\n")
+        for url, count in links_details.items():
+            f.write(f"链接: {url}\n提取节点数: {count} 个\n----------------------------------------\n")
+    print(f"[提示] 已生成链接抓取明细文件: linksdetails.txt")
+
     alive_nodes_links = []
     if raw_nodes_links:
         renamed_nodes = [rename_node(n) for n in raw_nodes_links]
@@ -335,7 +350,7 @@ def main():
     ps_tasks = parse_pslinks_file()
     self_nodes = []
     if ps_tasks:
-        raw_self_text = fetch_links_batch(ps_tasks)
+        raw_self_text, _ = fetch_links_batch(ps_tasks)
         raw_self_nodes = extract_nodes_from_text(raw_self_text)
         print(f"[抓取统计] self.txt 来源原始节点总数: {len(raw_self_nodes)} 个")
         if raw_self_nodes:
