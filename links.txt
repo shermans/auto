@@ -6,15 +6,15 @@ https://t.me/s/dingyue_center
 https://t.me/s/vpnfail_v2ray
 https://t.me/s/SSRSUB
 https://t.me/s/QiangLieTuiJian
-https://t.me/vpnfail_v2ray
-https://t.me/allproconf
-https://t.me/ConfigsHUB
-https://t.me/filmetadris
-https://t.me/AzadNet
+https://t.me/s/allproconf
+https://t.me/s/ConfigsHUB
+https://t.me/s/filmetadris
+https://t.me/s/AzadNet
+https://t.me/s/SOSkeyNET
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
-
+#https://raw.githubusercontent.com/free18/v2ray/refs/heads/main/v.txt
 # https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/refs/heads/main/subs.txt
 # 44W个太多了 # https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/all_extracted_configs.txt
 # https://raw.githubusercontent.com/Romaxa55/MegaV_Public/refs/heads/main/subs/all.txt
