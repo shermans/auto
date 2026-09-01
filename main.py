@@ -125,37 +125,59 @@ def is_download_link(url_str):
 
 def fetch_single_url(url, headers):
     print(f"[-] 正在抓取: {url}")
-    try:
-        resp = requests.get(url, headers=headers, timeout=15, proxies=PROXIES)
-        if resp.status_code == 200:
-            page_text = resp.text
-            extracted_subs = []
-            
-            if "t.me" in url:
-                page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
-                found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
-                for sub_link in found_sub_links:
-                    if any(x in sub_link for x in ["t.me", "telegram.org", "w3.org"]) or is_download_link(sub_link):
-                        continue
-                    sub_link = sub_link.rstrip('.,;\'">)')
-                    converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
-                    extracted_subs.append(converted_sub)
+    
+    # 针对不包含 t.me 的链接，定义一个内部的通用解析与抓取函数
+    def perform_request(target_url):
+        try:
+            resp = requests.get(target_url, headers=headers, timeout=15, proxies=PROXIES)
+            if resp.status_code == 200:
+                page_text = resp.text
+                extracted_subs = []
+                
+                if "t.me" in target_url:
+                    page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
+                    found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
+                    for sub_link in found_sub_links:
+                        if any(x in sub_link for x in ["t.me", "telegram.org", "w3.org"]) or is_download_link(sub_link):
+                            continue
+                        sub_link = sub_link.rstrip('.,;\'">)')
+                        converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
+                        extracted_subs.append(converted_sub)
 
-            found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
-            decoded_page = safe_base64_decode(page_text)
-            found_in_decoded = re.findall(PROTOCOL_REGEX_STR, decoded_page, re.IGNORECASE)
-            
-            total_found = len(set(found_in_page + found_in_decoded))
-            if total_found > 0:
-                print(f"    -> [{url}] 成功获取，提取到节点: {total_found} 个")
-            
-            combined_text = page_text + "\n" + decoded_page + "\n"
-            return combined_text, extracted_subs
-        else:
-            print(f"    -> [{url}] 抓取失败，HTTP 状态码: {resp.status_code}")
-    except Exception as e:
-        print(f"    -> [{url}] 请求异常: {e}")
-    return "", []
+                found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
+                decoded_page = safe_base64_decode(page_text)
+                found_in_decoded = re.findall(PROTOCOL_REGEX_STR, decoded_page, re.IGNORECASE)
+                
+                total_found = len(set(found_in_page + found_in_decoded))
+                combined_text = page_text + "\n" + decoded_page + "\n"
+                return combined_text, extracted_subs, total_found
+            else:
+                print(f"    -> [{target_url}] 抓取失败，HTTP 状态码: {resp.status_code}")
+        except Exception as e:
+            print(f"    -> [{target_url}] 请求异常: {e}")
+        return "", [], 0
+
+    # 包含 t.me 的链接按照原逻辑执行
+    if "t.me" in url:
+        combined_text, extracted_subs, total_found = perform_request(url)
+        if total_found > 0:
+            print(f"    -> [{url}] 成功获取，提取到节点: {total_found} 个")
+        return combined_text, extracted_subs
+
+    # 不包含 t.me 的链接：先直接抓取
+    combined_text, extracted_subs, total_found = perform_request(url)
+    if total_found > 0:
+        print(f"    -> [{url}] 直连成功获取，提取到节点: {total_found} 个")
+        return combined_text, extracted_subs
+
+    # 未抓取到节点，添加 CONVERT_API 前缀重试
+    converted_url = url if CONVERT_API in url else CONVERT_API + urllib.parse.quote(url, safe='')
+    print(f"    -> [{url}] 直连未抓取到节点，使用 API 转换继续抓取: {converted_url}")
+    combined_text_conv, extracted_subs_conv, total_found_conv = perform_request(converted_url)
+    if total_found_conv > 0:
+        print(f"    -> [{converted_url}] 转换后成功获取，提取到节点: {total_found_conv} 个")
+        
+    return combined_text_conv, extracted_subs_conv
 
 def fetch_links_batch(link_list):
     if not link_list:
