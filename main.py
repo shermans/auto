@@ -278,11 +278,12 @@ def get_country_code(node_str):
 
 def rename_node(node_str):
     country = get_country_code(node_str)
+    host = extract_node_host(node_str)
     # 转换为北京时间 (UTC+8)
     beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
     current_day = beijing_time.strftime('%d')
     current_hour = beijing_time.strftime('%H')
-    new_name = f"{country}-{current_day}-{current_hour}"
+    new_name = f"{country}-{current_day}-{current_hour}-{host}"
     if '#' in node_str:
         return f"{node_str.rsplit('#', 1)[0]}#{urllib.parse.quote(new_name)}"
     else:
