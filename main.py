@@ -112,15 +112,27 @@ def filter_tme_messages_by_days(html_content, days_limit):
     return filtered_html
 
 def is_download_link(url_str):
+    # 扩展忽略的文件扩展名列表，覆盖更多文件类型
     ignored_extensions = (
-        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico',
-        '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi',
-        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
-        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.flv', '.wav',
-        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-        '.txt', '.json', '.xml', '.csv'
+        # 图片
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico', '.tif', '.tiff',
+        # 可执行文件/安装包
+        '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi', '.bin', '.iso', '.img',
+        # 压缩包
+        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.zst', '.cab',
+        # 音视频
+        '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.flv', '.wav', '.aac', '.flac', '.wmv', '.webm',
+        # 文档
+        '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
+        # 文本/数据
+        '.txt', '.json', '.xml', '.csv', '.log', '.md', '.yaml', '.yml',
+        # 字体
+        '.ttf', '.otf', '.woff', '.woff2', '.eot',
+        # 其他常见下载
+        '.torrent', '.sql', '.db', '.sqlite', '.bak', '.jar', '.war', '.class'
     )
     parsed_path = urlparse(url_str).path.lower()
+    # 如果路径以这些扩展名结尾，视为下载链接
     return any(parsed_path.endswith(ext) for ext in ignored_extensions)
 
 def fetch_single_url(url, headers):
@@ -136,13 +148,35 @@ def fetch_single_url(url, headers):
                 
                 if "t.me" in target_url:
                     page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
-                    found_sub_links = re.findall(r"(https?://[^\s<>\"']+(?:sub|token|api|v2ray|clash|custom|[a-zA-Z0-9\-_./?=]+[a-zA-Z0-9\-_./?=]))", page_text, re.IGNORECASE)
-                    for sub_link in found_sub_links:
-                        if any(x in sub_link for x in ["t.me", "telegram.org", "w3.org"]) or is_download_link(sub_link):
+                    # 提取页面中所有 http(s) 链接
+                    all_links = re.findall(r'https?://[^\s<>"\']+', page_text, re.IGNORECASE)
+                    for link in all_links:
+                        # 清理链接末尾的标点
+                        link = link.rstrip('.,;\'">)')
+                        # 排除 t.me 和 telegram.org 及 w3.org 等无关链接
+                        if any(x in link for x in ["t.me", "telegram.org", "w3.org"]):
                             continue
-                        sub_link = sub_link.rstrip('.,;\'">)')
-                        converted_sub = sub_link if CONVERT_API in sub_link else CONVERT_API + urllib.parse.quote(sub_link, safe='')
-                        extracted_subs.append(converted_sub)
+                        # 排除文件下载链接
+                        if is_download_link(link):
+                            continue
+                        # 如果链接本身是节点协议（如 vmess://），则跳过（这些会在页面文本中直接提取）
+                        if re.match(PROTOCOL_REGEX_STR, link, re.IGNORECASE):
+                            continue
+                        # 检查链接是否可能为订阅链接：包含关键词或路径特征
+                        keywords = ['sub', 'token', 'api', 'v2ray', 'clash', 'custom', 'subscribe', 'list', 'config', 'profile']
+                        if any(kw in link.lower() for kw in keywords):
+                            # 添加 CONVERT_API 前缀
+                            converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
+                            extracted_subs.append(converted_sub)
+                        # 如果链接路径看起来像订阅（例如以 /sub、/subscribe 结尾等），也可以添加
+                        elif re.search(r'/(sub|subscribe|get|list|config|profile)(/|$|\?)', link, re.IGNORECASE):
+                            converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
+                            extracted_subs.append(converted_sub)
+                        # 对于其他链接，如果域名包含 v2、ss、trojan 等字样，也视为订阅
+                        elif any(domain in link.lower() for domain in ['v2ray', 'clash', 'ssr', 'sub', 'proxy', 'node']):
+                            converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
+                            extracted_subs.append(converted_sub)
+                        # 否则，忽略该链接（可能不是订阅）
 
                 found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
                 decoded_page = safe_base64_decode(page_text)
