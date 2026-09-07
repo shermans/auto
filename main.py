@@ -112,33 +112,22 @@ def filter_tme_messages_by_days(html_content, days_limit):
     return filtered_html
 
 def is_download_link(url_str):
-    # 扩展忽略的文件扩展名列表，覆盖更多文件类型
     ignored_extensions = (
-        # 图片
         '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico', '.tif', '.tiff',
-        # 可执行文件/安装包
         '.apk', '.exe', '.dmg', '.pkg', '.deb', '.rpm', '.msi', '.bin', '.iso', '.img',
-        # 压缩包
         '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.zst', '.cab',
-        # 音视频
         '.mp3', '.mp4', '.avi', '.mkv', '.mov', '.flv', '.wav', '.aac', '.flac', '.wmv', '.webm',
-        # 文档
         '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
-        # 文本/数据
         '.txt', '.json', '.xml', '.csv', '.log', '.md', '.yaml', '.yml',
-        # 字体
         '.ttf', '.otf', '.woff', '.woff2', '.eot',
-        # 其他常见下载
         '.torrent', '.sql', '.db', '.sqlite', '.bak', '.jar', '.war', '.class'
     )
     parsed_path = urlparse(url_str).path.lower()
-    # 如果路径以这些扩展名结尾，视为下载链接
     return any(parsed_path.endswith(ext) for ext in ignored_extensions)
 
 def fetch_single_url(url, headers):
     print(f"[-] 正在抓取: {url}")
     
-    # 针对不包含 t.me 的链接，定义一个内部的通用解析与抓取函数
     def perform_request(target_url):
         try:
             resp = requests.get(target_url, headers=headers, timeout=15, proxies=PROXIES)
@@ -148,35 +137,25 @@ def fetch_single_url(url, headers):
                 
                 if "t.me" in target_url:
                     page_text = filter_tme_messages_by_days(page_text, DAYS_LIMIT)
-                    # 提取页面中所有 http(s) 链接
                     all_links = re.findall(r'https?://[^\s<>"\']+', page_text, re.IGNORECASE)
                     for link in all_links:
-                        # 清理链接末尾的标点
                         link = link.rstrip('.,;\'">)')
-                        # 排除 t.me 和 telegram.org 及 w3.org 等无关链接
                         if any(x in link for x in ["t.me", "telegram.org", "w3.org"]):
                             continue
-                        # 排除文件下载链接
                         if is_download_link(link):
                             continue
-                        # 如果链接本身是节点协议（如 vmess://），则跳过（这些会在页面文本中直接提取）
                         if re.match(PROTOCOL_REGEX_STR, link, re.IGNORECASE):
                             continue
-                        # 检查链接是否可能为订阅链接：包含关键词或路径特征
                         keywords = ['sub', 'token', 'api', 'v2ray', 'clash', 'custom', 'subscribe', 'list', 'config', 'profile']
                         if any(kw in link.lower() for kw in keywords):
-                            # 添加 CONVERT_API 前缀
                             converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
                             extracted_subs.append(converted_sub)
-                        # 如果链接路径看起来像订阅（例如以 /sub、/subscribe 结尾等），也可以添加
                         elif re.search(r'/(sub|subscribe|get|list|config|profile)(/|$|\?)', link, re.IGNORECASE):
                             converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
                             extracted_subs.append(converted_sub)
-                        # 对于其他链接，如果域名包含 v2、ss、trojan 等字样，也视为订阅
                         elif any(domain in link.lower() for domain in ['v2ray', 'clash', 'ssr', 'sub', 'proxy', 'node']):
                             converted_sub = link if CONVERT_API in link else CONVERT_API + urllib.parse.quote(link, safe='')
                             extracted_subs.append(converted_sub)
-                        # 否则，忽略该链接（可能不是订阅）
 
                 found_in_page = re.findall(PROTOCOL_REGEX_STR, page_text, re.IGNORECASE)
                 decoded_page = safe_base64_decode(page_text)
@@ -191,20 +170,17 @@ def fetch_single_url(url, headers):
             print(f"    -> [{target_url}] 请求异常: {e}")
         return "", [], 0
 
-    # 包含 t.me 的链接按照原逻辑执行
     if "t.me" in url:
         combined_text, extracted_subs, total_found = perform_request(url)
         if total_found > 0:
             print(f"    -> [{url}] 成功获取，提取到节点: {total_found} 个")
         return combined_text, extracted_subs
 
-    # 不包含 t.me 的链接：先直接抓取
     combined_text, extracted_subs, total_found = perform_request(url)
     if total_found > 0:
         print(f"    -> [{url}] 直连成功获取，提取到节点: {total_found} 个")
         return combined_text, extracted_subs
 
-    # 未抓取到节点，添加 CONVERT_API 前缀重试
     converted_url = url if CONVERT_API in url else CONVERT_API + urllib.parse.quote(url, safe='')
     print(f"    -> [{url}] 直连未抓取到节点，使用 API 转换继续抓取: {converted_url}")
     combined_text_conv, extracted_subs_conv, total_found_conv = perform_request(converted_url)
@@ -312,16 +288,22 @@ def get_country_code(node_str):
 
 def rename_node(node_str):
     country = get_country_code(node_str)
-    host = extract_node_host(node_str)
     # 转换为北京时间 (UTC+8)
     beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
     current_day = beijing_time.strftime('%d')
     current_hour = beijing_time.strftime('%H')
-    new_name = f"{country}-{current_day}-{current_hour}-{host}"
+    
+    # 提取节点原始命名（若不存在则默认为空字符串）
+    raw_name = ""
     if '#' in node_str:
-        return f"{node_str.rsplit('#', 1)[0]}#{urllib.parse.quote(new_name)}"
-    else:
-        return f"{node_str}#{urllib.parse.quote(new_name)}"
+        raw_name = urllib.parse.unquote(node_str.split('#')[-1])
+    
+    # 拼接格式：国家-日期-小时-原始命名
+    new_name = f"{country}-{current_day}-{current_hour}-{raw_name}" if raw_name else f"{country}-{current_day}-{current_hour}"
+    
+    # 重新拼接节点 URL
+    base_url = node_str.rsplit('#', 1)[0]
+    return f"{base_url}#{urllib.parse.quote(new_name)}"
 
 def is_ai_friendly_node(node_str):
     return get_country_code(node_str) in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
