@@ -245,63 +245,49 @@ def extract_nodes_from_text(raw_text):
             nodes.append(line_clean.rstrip('.,;'))
     return nodes
 
-def extract_node_host(node_str):
-    try:
-        if node_str.lower().startswith('vmess://'):
-            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
-            if decoded_json_str:
-                host = json.loads(decoded_json_str).get('add')
-                if host: return str(host).strip()
-        clean_str = node_str.split('#')[0].split('?')[0]
-        parsed = urlparse(clean_str)
-        netloc = parsed.netloc or clean_str.split('://')[-1]
-        if '@' in netloc: netloc = netloc.split('@')[-1]
-        host = netloc.split(':')[0].strip('[]')
-        if host: return host
-    except Exception:
-        pass
-    return "UnknownIP"
-
 def get_country_code(node_str):
     country_mapping = {
-        'US': ['us', 'usa', 'united states', 'America', '美', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯'],
+        'US': ['us', 'usa', 'united states', 'america', '美', '美国', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯', '芝加哥', '纽交所', '华盛顿'],
         'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
-        'JP': ['jp', 'japan', '日本', '东京', '大阪'],
+        'JP': ['jp', 'japan', '日本', '东京', '大阪', '埼玉'],
         'SG': ['sg', 'singapore', '新加坡', '狮城'],
-        'TW': ['tw', 'taiwan', '台湾', '台北'],
-        'KR': ['kr', 'korea', '韩国', '首尔'],
+        'TW': ['tw', 'taiwan', '台湾', '台北', '台中', '新北'],
+        'KR': ['kr', 'korea', '韩国', '首尔', '仁川'],
         'GB': ['gb', 'uk', 'united kingdom', '英国', '伦敦'],
         'DE': ['de', 'germany', '德国', '法兰克福'],
         'FR': ['fr', 'france', '法国', '巴黎'],
-        'RU': ['ru', 'russia', '俄罗斯', '莫斯科'],
+        'RU': ['ru', 'russia', '俄罗斯', '莫斯科', '圣彼得堡'],
         'CA': ['ca', 'canada', '加拿大', '温哥华', '多伦多'],
         'AU': ['au', 'australia', '澳大利亚', '悉尼', '墨尔本']
     }
+    
+    # 拼接节点名称和节点完整 URL，统一转小写判断
     name_part = urllib.parse.unquote(node_str.split('#')[-1]) if '#' in node_str else ""
     search_target = (name_part + " " + node_str).lower()
+    
     for code, keywords in country_mapping.items():
         for kw in keywords:
-            pattern = r'(?i)\b' + re.escape(kw) + r'\b' if len(kw) <= 3 else r'(?i)' + re.escape(kw)
+            # 兼容带有连字符/数字组合的域名 (如 uh-us01.xxx, jp-01, hk02 等)
+            if len(kw) <= 3:
+                pattern = r'(?i)(?:^|[\s\.\-_/@\^])' + re.escape(kw) + r'(?:$|[\s\.\-_/@\d])'
+            else:
+                pattern = r'(?i)' + re.escape(kw)
+                
             if re.search(pattern, search_target):
                 return code
     return "OTH"
 
 def rename_node(node_str):
     country = get_country_code(node_str)
-    # 转换为北京时间 (UTC+8)
     beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
     current_day = beijing_time.strftime('%d')
     current_hour = beijing_time.strftime('%H')
     
-    # 提取节点原始命名（若不存在则默认为空字符串）
     raw_name = ""
     if '#' in node_str:
         raw_name = urllib.parse.unquote(node_str.split('#')[-1])
     
-    # 拼接格式：国家-日期-小时-原始命名
     new_name = f"{country}-{current_day}-{current_hour}-{raw_name}" if raw_name else f"{country}-{current_day}-{current_hour}"
-    
-    # 重新拼接节点 URL
     base_url = node_str.rsplit('#', 1)[0]
     return f"{base_url}#{urllib.parse.quote(new_name)}"
 
@@ -355,7 +341,6 @@ def main():
     raw_nodes_links = extract_nodes_from_text(links_batch_text)
     print(f"\n[抓取统计] links.txt 来源原始节点总数: {len(raw_nodes_links)} 个")
     
-    # 输出每个链接的节点抓取情况到 linksdetails.txt
     with open('linksdetails.txt', 'w', encoding='utf-8') as f:
         f.write("========== links.txt 节点抓取明细 ==========\n")
         for url, count in links_details.items():
@@ -376,18 +361,16 @@ def main():
                     alive_nodes_links.append(res_node)
         print(f"[统计] links.txt 测活完毕，存活节点数: {len(alive_nodes_links)} 个")
 
-    # 分类筛选出 US 节点、AI 节点、其他节点
     us_nodes_links = [n for n in alive_nodes_links if get_country_code(n) == 'US']
     ai_nodes_links = [n for n in alive_nodes_links if is_ai_friendly_node(n)]
     other_nodes_links = [n for n in alive_nodes_links if not is_ai_friendly_node(n)]
     
-    # 导出 links.txt 生成的文件
     make_base64_file('ALL.txt', alive_nodes_links)
     make_base64_file('US.txt', us_nodes_links)
     make_base64_file('AI.txt', ai_nodes_links)
     make_base64_file('OTHER.txt', other_nodes_links)
 
-    # ---------------- 2. 单独摘出 self.txt 处理 (抓取 -> 不测活、不重命名、不去重 -> 仅提取 US 节点) ----------------
+    # ---------------- 2. 单独处理 self.txt (抓取 -> 不测活、不重命名、完全不去重 -> 仅按准确逻辑提取 US 节点) ----------------
     ps_tasks = parse_pslinks_file()
     self_nodes = []
     sus_nodes = []
@@ -397,11 +380,10 @@ def main():
         self_nodes = extract_nodes_from_text(raw_self_text)
         print(f"[抓取统计] self.txt 来源原始节点总数: {len(self_nodes)} 个")
         if self_nodes:
-            # 仅筛选出 US 节点，保留原始重复项和顺序
+            # 提取所有准确识别为 US 的美国节点（包括类似于 uh-us01 格式的域名节点）
             sus_nodes = [n for n in self_nodes if get_country_code(n) == 'US']
             print(f"[提示] self.txt 提取节点数: {len(self_nodes)} 个，其中美国 (US) 节点: {len(sus_nodes)} 个")
 
-    # 导出单独的 self 美国节点文件 SUS.txt
     make_base64_file('SUS.txt', sus_nodes)
 
     # ---------------- 3. 合并 links.txt 有效节点 + self.txt 全量节点 ----------------
