@@ -387,22 +387,25 @@ def main():
     make_base64_file('AI.txt', ai_nodes_links)
     make_base64_file('OTHER.txt', other_nodes_links)
 
-    # ---------------- 2. 单独摘出 self.txt 处理 (抓取 -> 不测活、不重命名、不删除) ----------------
+    # ---------------- 2. 单独摘出 self.txt 处理 (抓取 -> 不测活、不重命名、不去重 -> 仅提取 US 节点) ----------------
     ps_tasks = parse_pslinks_file()
     self_nodes = []
+    sus_nodes = []
     if ps_tasks:
         raw_self_text, _ = fetch_links_batch(ps_tasks)
-        raw_self_nodes = extract_nodes_from_text(raw_self_text)
-        print(f"[抓取统计] self.txt 来源原始节点总数: {len(raw_self_nodes)} 个")
-        if raw_self_nodes:
-            self_nodes = list(set(raw_self_nodes))
-            print(f"[提示] self.txt 提取后直接采用节点数: {len(self_nodes)} 个")
+        # 完全保留原始节点列表（不去重）
+        self_nodes = extract_nodes_from_text(raw_self_text)
+        print(f"[抓取统计] self.txt 来源原始节点总数: {len(self_nodes)} 个")
+        if self_nodes:
+            # 仅筛选出 US 节点，保留原始重复项和顺序
+            sus_nodes = [n for n in self_nodes if get_country_code(n) == 'US']
+            print(f"[提示] self.txt 提取节点数: {len(self_nodes)} 个，其中美国 (US) 节点: {len(sus_nodes)} 个")
 
-    # 导出单独的 self 节点文件 SUS.txt
-    make_base64_file('SUS.txt', self_nodes)
+    # 导出单独的 self 美国节点文件 SUS.txt
+    make_base64_file('SUS.txt', sus_nodes)
 
     # ---------------- 3. 合并 links.txt 有效节点 + self.txt 全量节点 ----------------
-    sall_nodes = list(set(alive_nodes_links + self_nodes))
+    sall_nodes = alive_nodes_links + self_nodes
     make_base64_file('SALL.txt', sall_nodes)
 
     # ---------------- 统计输出 ----------------
@@ -414,7 +417,7 @@ def main():
     print(f" - AI 友好节点       (AI.txt):     {len(ai_nodes_links)} 个")
     print(f" - 其他节点         (OTHER.txt):  {len(other_nodes_links)} 个")
     print(" --- self.txt 及合并部分 ---")
-    print(f" - self.txt 专属节点 (SUS.txt):    {len(self_nodes)} 个")
+    print(f" - self.txt 美国节点 (SUS.txt):    {len(sus_nodes)} 个")
     print(f" - 最终合并节点总数 (SALL.txt):   {len(sall_nodes)} 个")
     print("========================================")
 
