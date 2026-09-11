@@ -11,6 +11,7 @@ https://t.me/s/ConfigsHUB
 https://t.me/s/filmetadris
 https://t.me/s/AzadNet
 https://t.me/s/SOSkeyNET
+https://t.me/s/PrivateVPNs
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
