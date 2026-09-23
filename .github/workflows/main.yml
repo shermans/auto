@@ -49,8 +49,8 @@ jobs:
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.io'
         
-        # 包含了所有生成的 TXT 文件：ALL.txt, US.txt, AI.txt, OTHER.txt, SUS.txt, SALL.txt
-        git add ALL.txt US.txt AI.txt OTHER.txt SUS.txt SALL.txt linksdetails.txt
+        # 包含了所有生成的 TXT 文件：ALL.txt太大不要, US.txt, AI.txt, OTHER.txt太大不要, SUS.txt, SALL.txt
+        git add US.txt AI.txt  SUS.txt SALL.txt linksdetails.txt
         
         # 安全检查：如果无任何文件改动，正常退出（exit 0）不抛出错误
         if git diff --staged --quiet; then
