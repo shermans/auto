@@ -386,8 +386,8 @@ def main():
 
     make_base64_file('SUS.txt', sus_nodes)
 
-    # ---------------- 3. 合并 links.txt 有效节点 + self.txt 全量节点 ----------------
-    sall_nodes = alive_nodes_links + self_nodes
+    # ---------------- 3. self.txt 全量节点 ----------------
+    sall_nodes = self_nodes
     make_base64_file('SALL.txt', sall_nodes)
 
     # ---------------- 统计输出 ----------------
