@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ==================== 用户自定义配置区 ====================
 PROXY_SWITCH = 'N'  
 CONVERT_API = "https://url.v1.mk/sub?target=mixed&url="
-DAYS_LIMIT = 7  
+DAYS_LIMIT = 3
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
