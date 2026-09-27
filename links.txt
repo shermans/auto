@@ -12,6 +12,7 @@ https://t.me/s/PrivateVPNs
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅
+https://github.com/cbusifabcap/daily_free_vpn/raw/refs/heads/main/Z.txt
 https://raw.githubusercontent.com/free18/v2ray/refs/heads/main/v.txt
 https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/refs/heads/main/subs.txt
 #44W  https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/all_extracted_configs.txt
