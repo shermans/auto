@@ -24,8 +24,8 @@ PROXIES = {
 
 SUPPORTED_SCHEMES = (
     "vmess", "vless", "trojan", "ss", "ssr", 
-    "hysteria", "hy2", "tuic", "anytls", 
-    "juicity", "wireguard", "wg", "ssh", "socks5", "http"
+    "hysteria","hysteria2", "hy2", "tuic", "anytls","Anytls", 
+    "juicity", "wireguard", "wg", "ssh", "socks5"
 )
 PROTOCOL_REGEX_STR = r"((?:" + "|".join(SUPPORTED_SCHEMES) + r")://[^\s<>\"']+)"
 
