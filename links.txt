@@ -7,6 +7,11 @@ https://t.me/s/ConfigsHUB
 https://t.me/s/SOSkeyNET
 https://t.me/s/PrivateVPNs
 #待验证
+https://t.me/s/proxy_kafee
+https://t.me/s/singbox1
+https://t.me/s/Express_freevpn/
+https://t.me/s/SPARTAN_YT
+https://t.me/s/vpn_Accounti
 #要单独优化 
 https://t.me/s/freevpnjd
 # 质量差
@@ -17,6 +22,22 @@ https://t.me/s/QiangLieTuiJian
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅,宁缺毋滥
+https://github.com/R3ZARAHIMI/tg-v2ray-configs-every2h/raw/refs/heads/main/Original-Configs.txt
+https://github.com/R3ZARAHIMI/tg-v2ray-configs-every2h/raw/refs/heads/main/Config_no_cf.txt
+https://github.com/R3ZARAHIMI/tg-v2ray-configs-every2h/raw/refs/heads/main/Config_jo_Light.txt
+https://github.com/R3ZARAHIMI/tg-v2ray-configs-every2h/raw/refs/heads/main/Config_jo.txt
+https://raw.githubusercontent.com/r3zarahimi/tg-v2ray-configs-every2h/main/conf-week.txt
+https://github.com/AliDev-ir/FreeVPN/raw/refs/heads/main/vpn
+https://github.com/AliDev-ir/FreeVPN/raw/refs/heads/main/pcvpn
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/BLACK_SS+All_RUS.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/BLACK_SS+All_RUS.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/BLACK_SS_WEAK_DPI_RUS.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/BLACK_VLESS_RUS.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/BLACK_VLESS_RUS_mobile.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/WHITE-CIDR-RU-all.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/WHITE-CIDR-RU-checked.txt
+https://github.com/igareck/vpn-configs-for-russia/raw/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt
+https://www.v2nodes.com/subscriptions/country/all/?key=F8EDAC1EAF207FD
 https://freenode.biz/api/subscribe?country=US&format=text
 https://github.com/davudsedft/purvpn/raw/refs/heads/main/links/purkow.txt
 https://github.com/cbusifabcap/daily_free_vpn/raw/refs/heads/main/Z.txt
