@@ -18,6 +18,7 @@ https://t.me/s/QiangLieTuiJian
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅,宁缺毋滥
 https://freenode.biz/api/subscribe?country=US&format=text
+https://github.com/davudsedft/purvpn/raw/refs/heads/main/links/purkow.txt
 https://github.com/cbusifabcap/daily_free_vpn/raw/refs/heads/main/Z.txt
 https://raw.githubusercontent.com/free18/v2ray/refs/heads/main/v.txt
 https://raw.githubusercontent.com/MohsenReyhani/vless-subscriptions/refs/heads/main/subs.txt
