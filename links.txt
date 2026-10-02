@@ -22,6 +22,8 @@ https://t.me/s/QiangLieTuiJian
 
 [github]
 # GitHub 托管源、普通直连及已内置转换的订阅,宁缺毋滥
+https://github.com/Argh73/V2Ray-Vault/raw/14b95499d67b6310cd721fbb213741a4efcf4409/data/sub/countries/US.txt
+https://github.com/jiuzihe36/free-vpn-sub/raw/d9ac913df602099f54dc35afa93469430833919d/sub/by-country/US.txt
 https://github.com/kooker/FreeSubsCheck/raw/e8466ff095b2b35dceca47196e1a9d44febfaff8/kooker.jp.txt
 https://github.com/kooker/FreeSubsCheck/raw/e8466ff095b2b35dceca47196e1a9d44febfaff8/base64.txt
 https://github.com/rtwo2/FastNodes/raw/8a28d95793a0ab8113449745ea85fcaeba2ae816/sub/countries/US.txt
