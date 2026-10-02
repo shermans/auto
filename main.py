@@ -354,7 +354,7 @@ def main():
         print(f"[提示] 重命名后去重完成：由 {len(renamed_nodes)} 个节点去重为 {len(unique_renamed_nodes)} 个节点")
         
         print(f"[提示] 开始对 links.txt 去重后的节点进行 TCP 测活...")
-        with ThreadPoolExecutor(max_workers=200) as executor:
+        with ThreadPoolExecutor(max_workers=500) as executor:
             for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in unique_renamed_nodes}):
                 res_node, tcp_ok, _ = future.result()
                 if tcp_ok: 
