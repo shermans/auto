@@ -115,7 +115,7 @@ def rename_node_to_address(node_str):
             decoded_json_str = safe_base64_decode(raw_body)
             if decoded_json_str:
                 node_data = json.loads(decoded_json_str)
-                node_data['ps'] = addr  # 修改 ps 别名为地址
+                node_data['ps'] = addr
                 encoded_json = base64.b64encode(json.dumps(node_data, ensure_ascii=False).encode('utf-8')).decode('utf-8')
                 return f"vmess://{encoded_json}"
         except Exception:
@@ -402,7 +402,6 @@ def main():
             f.write(f"链接: {url}\n提取节点数: {count} 个\n----------------------------------------\n")
     print(f"[提示] 已生成链接抓取明细文件: linksdetails.txt")
 
-    # 1.1 提取 US 节点并重命名为地址
     us_raw_nodes = [n for n in raw_nodes_links if get_country_code(n) == 'US']
     print(f"[提示] links.txt 提取出美国 (US) 节点: {len(us_raw_nodes)} 个")
     renamed_us_nodes = [rename_node_to_address(n) for n in us_raw_nodes]
