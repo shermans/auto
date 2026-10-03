@@ -8,12 +8,18 @@ import urllib.parse
 from urllib.parse import urlparse
 from datetime import datetime, timezone, timedelta
 import requests
+from requests.adapters import HTTPAdapter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 用户自定义配置区 ====================
 PROXY_SWITCH = 'N'  
 CONVERT_API = "https://url.v1.mk/sub?target=mixed&url="
 DAYS_LIMIT = 3
+EXTERNAL_US_URL = "https://raw.githubusercontent.com/shermans/auto/refs/heads/main/US.txt"
+
+# GitHub Actions 运行环境下的安全并发上限参数
+FETCH_MAX_WORKERS = 200    # HTTP 抓取并发数
+TCPING_MAX_WORKERS = 1200   # TCP 测活并发数
 # ========================================================
 
 USE_PROXY = True if PROXY_SWITCH.upper() == 'Y' else False
@@ -21,6 +27,12 @@ PROXIES = {
     "http": "http://127.0.0.1:10808",
     "https": "http://127.0.0.1:10808"
 } if USE_PROXY else None
+
+# 创建全局高性能 Session，扩大连接池以支持高并发
+GLOBAL_SESSION = requests.Session()
+adapter = HTTPAdapter(pool_connections=FETCH_MAX_WORKERS, pool_maxsize=FETCH_MAX_WORKERS * 2)
+GLOBAL_SESSION.mount("http://", adapter)
+GLOBAL_SESSION.mount("https://", adapter)
 
 SUPPORTED_SCHEMES = (
     "vmess", "vless", "trojan", "ss", "ssr", 
@@ -44,6 +56,73 @@ def safe_base64_decode(s):
     except Exception:
         pass
     return ""
+
+def generate_time_node():
+    """生成带有当前月日时（格式：02-13-14 或 10-03-08）的占位空节点"""
+    beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
+    time_str = beijing_time.strftime('%m-%d-%H')
+    
+    dummy_vmess_data = {
+        "v": "2",
+        "ps": time_str,
+        "add": "0.0.0.0",
+        "port": 0,
+        "id": "00000000-0000-0000-0000-000000000000",
+        "aid": 0,
+        "scy": "auto",
+        "net": "tcp",
+        "type": "none",
+        "host": "",
+        "path": "",
+        "tls": ""
+    }
+    encoded_json = base64.b64encode(json.dumps(dummy_vmess_data).encode('utf-8')).decode('utf-8')
+    return f"vmess://{encoded_json}"
+
+def extract_node_address(node_str):
+    """提取节点的真实服务器 IP 或域名地址"""
+    try:
+        if node_str.lower().startswith('vmess://'):
+            decoded_json_str = safe_base64_decode(node_str.split('://')[1].split('#')[0].split('?')[0])
+            if decoded_json_str:
+                node_data = json.loads(decoded_json_str)
+                addr = node_data.get('add')
+                if addr:
+                    return str(addr).strip()
+        
+        clean_str = node_str.split('#')[0].split('?')[0]
+        parsed = urlparse(clean_str)
+        netloc = parsed.netloc or clean_str.split('://')[-1]
+        if '@' in netloc: 
+            netloc = netloc.split('@')[-1]
+        if ':' in netloc:
+            host = netloc.rsplit(':', 1)[0]
+        else:
+            host = netloc
+        return host.strip('[]').strip()
+    except Exception:
+        return ""
+
+def rename_node_to_address(node_str):
+    """将节点的备注名称(#后的部分)修改为与节点服务器地址一模一样"""
+    addr = extract_node_address(node_str)
+    if not addr:
+        return node_str
+        
+    if node_str.lower().startswith('vmess://'):
+        try:
+            raw_body = node_str.split('://')[1].split('#')[0].split('?')[0]
+            decoded_json_str = safe_base64_decode(raw_body)
+            if decoded_json_str:
+                node_data = json.loads(decoded_json_str)
+                node_data['ps'] = addr  # 修改 ps 别名为地址
+                encoded_json = base64.b64encode(json.dumps(node_data, ensure_ascii=False).encode('utf-8')).decode('utf-8')
+                return f"vmess://{encoded_json}"
+        except Exception:
+            pass
+
+    base_url = node_str.rsplit('#', 1)[0]
+    return f"{base_url}#{urllib.parse.quote(addr)}"
 
 def parse_links_file():
     links_path = 'links.txt'
@@ -72,24 +151,6 @@ def parse_links_file():
                 elif current_group == 'github': github_links.append(line)
                 elif current_group == 'chat': chat_links.append(line)
     return t_me_links, github_links, chat_links
-
-def parse_pslinks_file():
-    ps_path = 'self.txt'
-    ps_tasks = []
-    if not os.path.exists(ps_path):
-        print(f"[提示] 未在同路径下找到 {ps_path} 文件，将跳过 self.txt 解析。")
-        return ps_tasks
-
-    with open(ps_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if line.startswith('http://') or line.startswith('https://'):
-                ps_tasks.append(line)
-                
-    print(f"[提示] 成功从 self.txt 读取链接，直连抓取，共生成 {len(ps_tasks)} 个请求任务。")
-    return ps_tasks
 
 def filter_tme_messages_by_days(html_content, days_limit):
     if days_limit <= 0:
@@ -130,7 +191,7 @@ def fetch_single_url(url, headers):
     
     def perform_request(target_url):
         try:
-            resp = requests.get(target_url, headers=headers, timeout=15, proxies=PROXIES)
+            resp = GLOBAL_SESSION.get(target_url, headers=headers, timeout=12, proxies=PROXIES)
             if resp.status_code == 200:
                 page_text = resp.text
                 extracted_subs = []
@@ -202,7 +263,7 @@ def fetch_links_batch(link_list):
     queue = list(link_list)
     url_details = {}
 
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    with ThreadPoolExecutor(max_workers=FETCH_MAX_WORKERS) as executor:
         future_to_url = {}
         
         while queue:
@@ -234,6 +295,30 @@ def fetch_links_batch(link_list):
 
     return all_raw_text, url_details
 
+def fetch_external_us_nodes(url):
+    """抓取外部 US 节点链接，支持 Base64 解码与纯文本两种方式"""
+    print(f"[-] 正在获取外部 US 节点: {url}")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    }
+    try:
+        resp = GLOBAL_SESSION.get(url, headers=headers, timeout=15, proxies=PROXIES)
+        if resp.status_code == 200:
+            content = resp.text.strip()
+            decoded_content = safe_base64_decode(content)
+            
+            nodes_raw = extract_nodes_from_text(content)
+            nodes_decoded = extract_nodes_from_text(decoded_content) if decoded_content else []
+            
+            combined_external_nodes = list(set(nodes_raw + nodes_decoded))
+            print(f"    -> 成功获取外部 US 节点: {len(combined_external_nodes)} 个")
+            return combined_external_nodes
+        else:
+            print(f"    -> 外部 US 节点获取失败，HTTP 状态码: {resp.status_code}")
+    except Exception as e:
+        print(f"    -> 外部 US 节点请求异常: {e}")
+    return []
+
 def extract_nodes_from_text(raw_text):
     nodes = []
     pattern = re.compile(PROTOCOL_REGEX_STR, re.IGNORECASE)
@@ -247,27 +332,14 @@ def extract_nodes_from_text(raw_text):
 
 def get_country_code(node_str):
     country_mapping = {
-        'US': ['us', 'usa', 'united states', 'america', '美', '美国', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯', '芝加哥', '纽交所', '华盛顿'],
-        'HK': ['hk', 'hongkong', 'hong kong', '香港', '港'],
-        'JP': ['jp', 'japan', '日本', '东京', '大阪', '埼玉'],
-        'SG': ['sg', 'singapore', '新加坡', '狮城'],
-        'TW': ['tw', 'taiwan', '台湾', '台北', '台中', '新北'],
-        'KR': ['kr', 'korea', '韩国', '首尔', '仁川'],
-        'GB': ['gb', 'uk', 'united kingdom', '英国', '伦敦'],
-        'DE': ['de', 'germany', '德国', '法兰克福'],
-        'FR': ['fr', 'france', '法国', '巴黎'],
-        'RU': ['ru', 'russia', '俄罗斯', '莫斯科', '圣彼得堡'],
-        'CA': ['ca', 'canada', '加拿大', '温哥华', '多伦多'],
-        'AU': ['au', 'australia', '澳大利亚', '悉尼', '墨尔本']
+        'US': ['us', 'usa', 'united states', 'america', '美', '美国', '洛杉矶', '圣何塞', '硅谷', '俄勒冈', '弗吉尼亚', '西雅图', '达拉斯', '芝加哥', '纽交所', '华盛顿']
     }
     
-    # 拼接节点名称和节点完整 URL，统一转小写判断
     name_part = urllib.parse.unquote(node_str.split('#')[-1]) if '#' in node_str else ""
     search_target = (name_part + " " + node_str).lower()
     
     for code, keywords in country_mapping.items():
         for kw in keywords:
-            # 兼容带有连字符/数字组合的域名 (如 uh-us01.xxx, jp-01, hk02 等)
             if len(kw) <= 3:
                 pattern = r'(?i)(?:^|[\s\.\-_/@\^])' + re.escape(kw) + r'(?:$|[\s\.\-_/@\d])'
             else:
@@ -276,23 +348,6 @@ def get_country_code(node_str):
             if re.search(pattern, search_target):
                 return code
     return "OTH"
-
-def rename_node(node_str):
-    country = get_country_code(node_str)
-    beijing_time = datetime.now(timezone.utc) + timedelta(hours=8)
-    current_day = beijing_time.strftime('%d')
-    current_hour = beijing_time.strftime('%H')
-    
-    raw_name = ""
-    if '#' in node_str:
-        raw_name = urllib.parse.unquote(node_str.split('#')[-1])
-    
-    new_name = f"{country}-{current_day}-{current_hour}-{raw_name}" if raw_name else f"{country}-{current_day}-{current_hour}"
-    base_url = node_str.rsplit('#', 1)[0]
-    return f"{base_url}#{urllib.parse.quote(new_name)}"
-
-def is_ai_friendly_node(node_str):
-    return get_country_code(node_str) in {'US', 'JP', 'SG', 'KR', 'TW', 'GB', 'DE', 'FR', 'CA', 'AU'}
 
 def test_tcping(node_str):
     try:
@@ -314,7 +369,7 @@ def test_tcping(node_str):
                 host, port = netloc.strip('[]'), 443
         if not host or not port: return False
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1.5)
+        s.settimeout(1.2)
         result = s.connect_ex((host, port))
         s.close()
         return result == 0
@@ -332,10 +387,10 @@ def make_base64_file(filename, node_list):
 def main():
     print("========================================")
     proxy_status = f"开启 (10808)" if USE_PROXY else "关闭 (直连)"
-    print(f" 开始并发抓取与解析 | 代理状态: {proxy_status} | 频道时间限制: 最近 {DAYS_LIMIT} 天")
+    print(f" 开始并发抓取与解析 | 代理状态: {proxy_status} | 抓取并发: {FETCH_MAX_WORKERS} | 测活并发: {TCPING_MAX_WORKERS}")
     print("========================================")
     
-    # ---------------- 1. 处理 links.txt (抓取 -> 重命名 -> 去重 -> TCP测活) ----------------
+    # ---------------- 1. 处理 links.txt (抓取 -> 筛选US -> 重命名) ----------------
     t_links, gh_links, chat_links = parse_links_file()
     links_batch_text, links_details = fetch_links_batch(t_links + gh_links + chat_links)
     raw_nodes_links = extract_nodes_from_text(links_batch_text)
@@ -347,60 +402,40 @@ def main():
             f.write(f"链接: {url}\n提取节点数: {count} 个\n----------------------------------------\n")
     print(f"[提示] 已生成链接抓取明细文件: linksdetails.txt")
 
-    alive_nodes_links = []
-    if raw_nodes_links:
-        renamed_nodes = [rename_node(n) for n in raw_nodes_links]
-        unique_renamed_nodes = list(set(renamed_nodes))
-        print(f"[提示] 重命名后去重完成：由 {len(renamed_nodes)} 个节点去重为 {len(unique_renamed_nodes)} 个节点")
-        
-        print(f"[提示] 开始对 links.txt 去重后的节点进行 TCP 测活...")
-        with ThreadPoolExecutor(max_workers=500) as executor:
-            for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in unique_renamed_nodes}):
+    # 1.1 提取 US 节点并重命名为地址
+    us_raw_nodes = [n for n in raw_nodes_links if get_country_code(n) == 'US']
+    print(f"[提示] links.txt 提取出美国 (US) 节点: {len(us_raw_nodes)} 个")
+    renamed_us_nodes = [rename_node_to_address(n) for n in us_raw_nodes]
+    print(f"[提示] links.txt 的 US 节点重命名完成，共 {len(renamed_us_nodes)} 个")
+
+    # ---------------- 2. 抓取外部 US 节点 (保持原样，不重命名) ----------------
+    external_us_nodes = fetch_external_us_nodes(EXTERNAL_US_URL)
+
+    # ---------------- 3. 合并两部分节点 -> 去重 ----------------
+    all_merged_nodes = renamed_us_nodes + external_us_nodes
+    unique_us_nodes = list(set(all_merged_nodes))
+    print(f"[提示] 合并去重完成：由总数 {len(all_merged_nodes)} 个精简为 {len(unique_us_nodes)} 个独立节点")
+
+    # ---------------- 4. 对去重后的节点进行 TCP 测活 ----------------
+    alive_us_nodes = []
+    if unique_us_nodes:
+        print(f"[提示] 开始对合并去重后的节点进行极速 TCP 测活 (并发数: {TCPING_MAX_WORKERS})...")
+        with ThreadPoolExecutor(max_workers=TCPING_MAX_WORKERS) as executor:
+            for future in as_completed({executor.submit(test_node_comprehensive, n): n for n in unique_us_nodes}):
                 res_node, tcp_ok, _ = future.result()
                 if tcp_ok: 
-                    alive_nodes_links.append(res_node)
-        print(f"[统计] links.txt 测活完毕，存活节点数: {len(alive_nodes_links)} 个")
+                    alive_us_nodes.append(res_node)
+        print(f"[统计] 测活完毕，存活可用 US 节点数: {len(alive_us_nodes)} 个")
 
-    us_nodes_links = [n for n in alive_nodes_links if get_country_code(n) == 'US']
-    ai_nodes_links = [n for n in alive_nodes_links if is_ai_friendly_node(n)]
-    other_nodes_links = [n for n in alive_nodes_links if not is_ai_friendly_node(n)]
-    
-    make_base64_file('ALL.txt', alive_nodes_links)
-    make_base64_file('US.txt', us_nodes_links)
-    make_base64_file('AI.txt', ai_nodes_links)
-    make_base64_file('OTHER.txt', other_nodes_links)
-
-    # ---------------- 2. 单独处理 self.txt (抓取 -> 不测活、不重命名、完全不去重 -> 仅按准确逻辑提取 US 节点) ----------------
-    ps_tasks = parse_pslinks_file()
-    self_nodes = []
-    sus_nodes = []
-    if ps_tasks:
-        raw_self_text, _ = fetch_links_batch(ps_tasks)
-        # 完全保留原始节点列表（不去重）
-        self_nodes = extract_nodes_from_text(raw_self_text)
-        print(f"[抓取统计] self.txt 来源原始节点总数: {len(self_nodes)} 个")
-        if self_nodes:
-            # 提取所有准确识别为 US 的美国节点（包括类似于 uh-us01 格式的域名节点）
-            sus_nodes = [n for n in self_nodes if get_country_code(n) == 'US']
-            print(f"[提示] self.txt 提取节点数: {len(self_nodes)} 个，其中美国 (US) 节点: {len(sus_nodes)} 个")
-
-    make_base64_file('SUS.txt', sus_nodes)
-
-    # ---------------- 3. self.txt 全量节点 ----------------
-    sall_nodes = self_nodes
-    make_base64_file('SALL.txt', sall_nodes)
+    # ---------------- 5. 插入时间节点并输出 US.txt ----------------
+    time_node = generate_time_node()
+    final_us_nodes = [time_node] + alive_us_nodes
+    make_base64_file('US.txt', final_us_nodes)
 
     # ---------------- 统计输出 ----------------
     print("\n" + "="*40)
     print(" 全部处理完成！最终结果统计：")
-    print(" --- links.txt 部分 ---")
-    print(f" - 有效可用节点总数 (ALL.txt):    {len(alive_nodes_links)} 个")
-    print(f" - 美国节点         (US.txt):     {len(us_nodes_links)} 个")
-    print(f" - AI 友好节点       (AI.txt):     {len(ai_nodes_links)} 个")
-    print(f" - 其他节点         (OTHER.txt):  {len(other_nodes_links)} 个")
-    print(" --- self.txt 及合并部分 ---")
-    print(f" - self.txt 美国节点 (SUS.txt):    {len(sus_nodes)} 个")
-    print(f" - 最终合并节点总数 (SALL.txt):   {len(sall_nodes)} 个")
+    print(f" - 美国可用节点总数 (US.txt, 含1个时间占位节点): {len(final_us_nodes)} 个")
     print("========================================")
 
 if __name__ == "__main__":
