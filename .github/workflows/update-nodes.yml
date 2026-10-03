@@ -3,7 +3,7 @@ name: Update US Nodes
 on:
   schedule:
     # 每 6 小时自动运行一次 (你可以修改 Cron 表达式)
-    - cron: '0 */6 * * *'
+    - cron: '0 */4 * * *'
   workflow_dispatch: # 支持手动触发运行
 
 # 必须赋予写权限，否则 git push 会报退出代码 128
