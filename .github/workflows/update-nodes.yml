@@ -2,11 +2,9 @@ name: Update US Nodes
 
 on:
   schedule:
-    # 北京时间 8:00, 12:00, 16:00, 20:00 执行 (对应 UTC 0:00, 4:00, 8:00, 12:00)
     - cron: '0 0,4,8,12 * * *'
-  workflow_dispatch: # 支持手动触发运行
+  workflow_dispatch:
 
-# 必须赋予写权限，否则 git push 会报退出代码 128
 permissions:
   contents: write
 
