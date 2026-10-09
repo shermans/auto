@@ -1,8 +1,9 @@
 name: Update US Nodes
 
+# 加8就是北京时间,避开整点高峰
 on:
   schedule:
-    - cron: '0 0,4,8,12 * * *'
+    - cron: '52 23,03,07,11 * * *'
   workflow_dispatch:
 
 permissions:
