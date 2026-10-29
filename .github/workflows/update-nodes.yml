@@ -36,7 +36,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           # 暂存生成的文件
-          git add US.txt ALL.txt linksdetails.txt
+          git add US.txt linksdetails.txt
           
           # 检查是否有文件变更，避免在无新变更时提交产生 Exit Code 128 错误
           if git diff --staged --quiet; then
